@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Should I open the windows?</title>
+<style>
+  :root {
+    --bg: #eef2f4;
+    --panel: #ffffff;
+    --ink: #1f2a33;
+    --ink-soft: #5b6b77;
+    --rule: #d3dbe0;
+    --cool: #2a7f9e;       /* dry / cool air */
+    --muggy: #c97a1f;      /* humid / warm air */
+    --win: #2f8f5b;
+    --win-bg: #e4f3ea;
+    --lose: #b8433a;
+    --lose-bg: #f7e6e4;
+    --meh: #8a7a2a;
+    --meh-bg: #f4efd9;
+    --focus: #1f5f78;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--cool); }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 22px 18px 48px; }
+
+  header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 20px; margin-bottom: 18px; }
+  header h1 { font-size: 26px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+  header p { margin: 0; color: var(--ink-soft); font-size: 14px; max-width: 60ch; }
+  .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; background: var(--panel); }
+  .seg button { border: 0; background: transparent; padding: 6px 12px; font: inherit; font-size: 13px; color: var(--ink-soft); cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--ink); color: #fff; }
+  .seg button:focus-visible, .btn:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+  .btn { border: 1px solid var(--rule); background: var(--panel); border-radius: 8px; padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer; color: var(--ink); }
+  .btn:hover { border-color: var(--ink-soft); }
+
+  .grid { display: grid; grid-template-columns: minmax(300px, 400px) 1fr; gap: 18px; align-items: start; }
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+
+  .panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 12px; padding: 16px 18px; }
+  .panel h2 { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+  .panel .sub { color: var(--ink-soft); font-size: 13px; margin: 0 0 12px; }
+  .air { border-left: 4px solid var(--rule); padding-left: 14px; margin-bottom: 20px; }
+  .air.inside { border-left-color: var(--cool); }
+  .air.outside { border-left-color: var(--muggy); }
+  .air .derived { font-size: 13px; color: var(--ink-soft); margin-top: 4px; font-variant-numeric: tabular-nums; }
+
+  .field { margin: 12px 0 4px; }
+  .field .row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+  .field label { font-size: 14px; }
+  .field .val { font-variant-numeric: tabular-nums; font-weight: 600; font-size: 15px; }
+  .field .val input { width: 5.2em; font: inherit; font-weight: 600; text-align: right; border: 1px solid transparent; border-radius: 6px; padding: 1px 4px; background: transparent; color: inherit; }
+  .field .val input:hover, .field .val input:focus { border-color: var(--rule); background: #fff; }
+  input[type=range] { width: 100%; margin: 6px 0 0; accent-color: var(--ink); }
+  .air.inside input[type=range] { accent-color: var(--cool); }
+  .air.outside input[type=range] { accent-color: var(--muggy); }
+  .mini-seg { font-size: 12px; }
+  .mini-seg button { padding: 3px 8px; }
+
+  details { border-top: 1px solid var(--rule); padding-top: 10px; }
+  details summary { cursor: pointer; font-size: 14px; color: var(--ink-soft); list-style: none; display: flex; align-items: center; gap: 6px; }
+  details summary::-webkit-details-marker { display: none; }
+  details summary::before { content: ""; width: 7px; height: 7px; border-right: 1.5px solid var(--ink-soft); border-bottom: 1.5px solid var(--ink-soft); transform: rotate(-45deg); transition: transform .15s; }
+  details[open] summary::before { transform: rotate(45deg); }
+  .adv { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; margin-top: 12px; }
+  .adv .f label { display: block; font-size: 12.5px; color: var(--ink-soft); margin-bottom: 3px; }
+  .adv .f input, .adv .f select { width: 100%; font: inherit; font-size: 14px; padding: 6px 8px; border: 1px solid var(--rule); border-radius: 7px; background: #fff; color: var(--ink); font-variant-numeric: tabular-nums; }
+  .adv .f.wide { grid-column: 1 / -1; }
+  .hint { font-size: 12px; color: var(--ink-soft); margin-top: 3px; }
+  .hint a { color: var(--cool); }
+  .info { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border-radius: 50%; border: 1px solid var(--ink-soft); color: var(--ink-soft); font-size: 10.5px; font-weight: 600; margin-left: 4px; cursor: help; vertical-align: 1px; }
+  .info:hover, .info:focus-visible { border-color: var(--ink); color: var(--ink); }
+
+  .verdict { border-radius: 12px; padding: 16px 18px; margin-bottom: 14px; border: 1px solid transparent; }
+  .verdict.win { background: var(--win-bg); border-color: #b9dcc7; }
+  .verdict.lose { background: var(--lose-bg); border-color: #ebc4c0; }
+  .verdict.meh { background: var(--meh-bg); border-color: #e2d9a8; }
+  .verdict h2 { margin: 0 0 6px; font-size: 24px; font-weight: 600; letter-spacing: -0.01em; }
+  .verdict.win h2 { color: var(--win); } .verdict.lose h2 { color: var(--lose); } .verdict.meh h2 { color: var(--meh); }
+  .verdict p { margin: 0; font-size: 14.5px; max-width: 70ch; }
+  .verdict .money { margin-top: 8px; font-size: 14px; font-variant-numeric: tabular-nums; }
+
+  .right { display: grid; gap: 14px; }
+  .chart-wrap { position: relative; }
+  canvas { width: 100%; height: auto; display: block; border-radius: 8px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12.5px; color: var(--ink-soft); margin-top: 8px; }
+  .legend span::before { content: ""; display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+  .legend .l-win::before { background: #9fd3b6; } .legend .l-lose::before { background: #efb1aa; } .legend .l-meh::before { background: #e8dfa5; } .legend .l-na::before { background: #d9dfe3; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: 6px 8px; border-bottom: 1px solid var(--rule); }
+  th { font-weight: 500; color: var(--ink-soft); font-size: 12.5px; }
+  td:first-child, th:first-child { text-align: left; }
+  tr:last-child td { border-bottom: 0; }
+  td.in { color: var(--cool); } td.out { color: var(--muggy); }
+  .neg { color: var(--win); } .pos { color: var(--lose); }
+
+  .fine { font-size: 12.5px; color: var(--ink-soft); }
+  .fine p { margin: 6px 0; }
+  .saved { font-size: 12px; color: var(--ink-soft); }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Should I open the windows?</h1>
+      <p>Compares indoor and outdoor air by total heat content (temperature and moisture), then prices the difference with your own equipment.</p>
+    </div>
+    <div class="toolbar">
+      <div class="seg" role="group" aria-label="Temperature units">
+        <button id="unitF" aria-pressed="true">°F</button>
+        <button id="unitC" aria-pressed="false">°C</button>
+      </div>
+      <button class="btn" id="reset">Reset to Atlanta spring morning</button>
+    </div>
+  </header>
+
+  <div class="grid">
+    <!-- LEFT: inputs -->
+    <div class="panel">
+      <div class="air inside">
+        <h2>Inside</h2>
+        <div class="field">
+          <div class="row"><label for="tIn">Temperature</label><span class="val"><input id="tInNum" type="number" step="0.5" aria-label="Inside temperature"><span id="tInUnit">°F</span></span></div>
+          <input id="tIn" type="range">
+        </div>
+        <div class="field">
+          <div class="row"><label for="rhIn">Relative humidity</label><span class="val"><input id="rhInNum" type="number" step="1" min="1" max="100" aria-label="Inside relative humidity">%</span></div>
+          <input id="rhIn" type="range" min="1" max="100" step="1">
+        </div>
+        <div class="derived" id="inDerived"></div>
+      </div>
+
+      <div class="air outside">
+        <h2>Outside</h2>
+        <div class="field">
+          <div class="row"><label for="tOut">Temperature</label><span class="val"><input id="tOutNum" type="number" step="0.5" aria-label="Outside temperature"><span id="tOutUnit">°F</span></span></div>
+          <input id="tOut" type="range">
+        </div>
+        <div class="field">
+          <div class="row">
+            <label for="hOut" id="hOutLabel">Relative humidity</label>
+            <span class="val"><input id="hOutNum" type="number" aria-label="Outside humidity"><span id="hOutUnit">%</span></span>
+          </div>
+          <input id="hOut" type="range">
+          <div class="row" style="margin-top:6px">
+            <span class="hint">Weather apps usually report dew point; enter whichever you have.</span>
+            <div class="seg mini-seg" role="group" aria-label="Outside humidity input type">
+              <button id="humRH" aria-pressed="true">RH</button>
+              <button id="humTD" aria-pressed="false">Dew point</button>
+            </div>
+          </div>
+        </div>
+        <div class="derived" id="outDerived"></div>
+      </div>
+
+      <details id="advDetails">
+        <summary>Equipment, house, and pricing</summary>
+        <div class="adv">
+          <div class="f wide">
+            <label for="mode">What is running right now</label>
+            <select id="mode">
+              <option value="dehum">Dehumidifier only (spring / fall, AC off)</option>
+              <option value="ac">Air conditioner (summer)</option>
+            </select>
+            <div class="hint" id="modeHint"></div>
+          </div>
+          <div class="f">
+            <label for="seer">AC efficiency (SEER) <span class="info" tabindex="0" title="Seasonal Energy Efficiency Ratio: cooling delivered per unit of electricity, in Btu per watt-hour. Higher is better. Printed on the yellow EnergyGuide sticker on the outdoor unit; if the sticker is gone, search the model number on the outdoor unit's data plate. Systems from the 1990s are typically 10–12, 2006–2022 installs 13–16, and anything sold since 2023 is at least 14–15 (SEER2 ratings are ~5% lower than SEER; either is fine here).">?</span></label>
+            <input id="seer" type="number" step="0.5" min="6" max="30">
+            <div class="hint">Yellow EnergyGuide sticker or model-number lookup. Old units 10–12, recent 14–16. <a href="https://www.energy.gov/energysaver/central-air-conditioning" target="_blank" rel="noopener">More</a></div>
+          </div>
+          <div class="f">
+            <label for="ief">Dehumidifier IEF (L/kWh) <span class="info" tabindex="0" title="Integrated Energy Factor: liters of water removed per kilowatt-hour of electricity. Higher is better. Listed on the ENERGY STAR label, the spec sheet, or the retailer's product page. If you only know pints/day and watts: IEF ≈ pints × 0.473 ÷ (watts × 24 ÷ 1000). Federal minimum is 1.30 (≤25 pints) to 1.60 (25–50 pints); ENERGY STAR units are about 1.6–2.0.">?</span></label>
+            <input id="ief" type="number" step="0.05" min="0.5" max="4">
+            <div class="hint">Spec sheet or ENERGY STAR label. Typical 1.3–2.0. From pints/day and watts: pints × 0.473 ÷ (W × 0.024). <a href="https://www.energystar.gov/products/dehumidifiers" target="_blank" rel="noopener">Lookup</a></div>
+          </div>
+          <div class="f">
+            <label for="price">Electricity ($/kWh) <span class="info" tabindex="0" title="Use your all-in rate: total bill divided by kWh used, so fuel charges, fees, and taxes are included. The 'energy charge' line alone understates it.">?</span></label>
+            <input id="price" type="number" step="0.01" min="0" max="2">
+            <div class="hint">Total bill ÷ kWh used on the bill.</div>
+          </div>
+          <div class="f">
+            <label for="elev">Elevation (<span id="elevUnit">ft</span>)</label>
+            <input id="elev" type="number" step="10">
+            <div class="hint">Sets barometric pressure. Small effect.</div>
+          </div>
+          <div class="f">
+            <label for="vol">House air volume (<span id="volUnit">ft³</span>) <span class="info" tabindex="0" title="Conditioned floor area times average ceiling height. Only count the space the open windows actually flush; if you open one bedroom, use that room's volume. Volume scales the dollar figures but does not change the verdict.">?</span></label>
+            <input id="vol" type="number" step="500" min="100">
+            <div class="hint">Floor area × ceiling height, for the space you are ventilating.</div>
+          </div>
+          <div class="f">
+            <label for="ach">Air changes per hour, windows open <span class="info" tabindex="0" title="How many times per hour the outdoor air replaces the room's air. Hard to know precisely; use a bracket. Windows cracked, still air: about 0.5–1. Several windows open, light breeze: 1–3. Cross-breeze through opposite windows: 3–6. Window fan or whole-house fan: fan CFM × 60 ÷ volume in ft³ (a 20-inch box fan is roughly 1,000–2,000 CFM). ACH scales the dollar figures but does not change the verdict.">?</span></label>
+            <input id="ach" type="number" step="0.5" min="0.1" max="30">
+            <div class="hint">Estimate: cracked 0.5–1, open 1–3, cross-breeze 3–6, fan CFM×60÷ft³.</div>
+          </div>
+          <div class="f">
+            <label for="hours">Hours windows stay open</label>
+            <input id="hours" type="number" step="0.5" min="0.1" max="24">
+            <div class="hint">Scales the dollar figures.</div>
+          </div>
+          <div class="f">
+            <label for="margin">Marginal band (kJ/kg) <span class="info" tabindex="0" title="How close outdoor and indoor total heat content (enthalpy) must be before the verdict says 'marginal' instead of committing. Consumer humidity sensors are typically off by 3–5% RH, which is roughly 1–2 kJ/kg at room conditions, so 1.5 is a reasonable default. Set to 0 to always get a firm answer.">?</span></label>
+            <input id="margin" type="number" step="0.5" min="0" max="10">
+            <div class="hint">Sensor slop. 1.5 ≈ a ±4% RH sensor error.</div>
+          </div>
+      </details>
+      <p class="saved" id="savedNote"></p>
+    </div>
+
+    <!-- RIGHT: results -->
+    <div class="right">
+      <div class="verdict" id="verdict">
+        <h2 id="vTitle"></h2>
+        <p id="vBody"></p>
+        <div class="money" id="vMoney"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Where this outdoor air sits</h2>
+        <p class="sub" id="chartSub"></p>
+        <div class="chart-wrap"><canvas id="chart" width="720" height="460" role="img" aria-label="Map of outdoor temperature versus dew point showing favorable and unfavorable regions"></canvas></div>
+        <div class="legend"><span class="l-win">Windows win</span><span class="l-lose">Windows lose</span><span class="l-meh">Marginal / trade-off</span><span class="l-na">Not physically possible (dew point above temperature)</span></div>
+      </div>
+
+      <div class="panel">
+        <h2>Air properties</h2>
+        <table>
+          <thead><tr><th></th><th>Inside</th><th>Outside</th><th>Outside − inside</th></tr></thead>
+          <tbody id="propRows"></tbody>
+        </table>
+      </div>
+
+      <div class="panel">
+        <h2 id="loadTitle">Energy for this session</h2>
+        <p class="sub" id="loadSub"></p>
+        <table><tbody id="loadRows"></tbody></table>
+        <div class="fine" id="loadNotes"></div>
+      </div>
+
+      <div class="fine">
+        <p>Method: saturation vapor pressure from the Buck (1981) equation; humidity ratio W = 0.62198·Pw/(P−Pw); moist-air enthalpy h = 1.006·T + W·(2501 + 1.86·T) kJ/kg; latent heat ≈ 2465 kJ/kg. In AC mode, the total load through the coil is m·Δh and electricity is load ÷ COP. In dehumidifier mode, imported moisture costs (liters ÷ IEF) kWh, and all of that electricity plus the latent heat of the condensed water is released into the room as heat. Everything here is a steady-state estimate that ignores thermal mass, fan energy, and infiltration you'd have anyway.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ===================== PHYSICS (SI internally) ===================== */
+var PHYS = (function () {
+  var CP_DA = 1.006, HFG = 2465, R_DA = 287.055;
+  function pws(Tc) { // Pa, Arden Buck 1981 over liquid water
+    return 611.21 * Math.exp((18.678 - Tc / 234.5) * (Tc / (257.14 + Tc)));
+  }
+  function pressureFromElevM(m) { return 101325 * Math.pow(1 - 2.25577e-5 * m, 5.2559); }
+  function humRatio(pw, p) { return 0.62198 * pw / (p - pw); }
+  function pwFromW(W, p) { return W * p / (0.62198 + W); }
+  function enthalpy(Tc, W) { return CP_DA * Tc + W * (2501 + 1.86 * Tc); } // kJ/kg dry air
+  function dewPoint(pw) { // invert Buck by bisection
+    if (pw <= 0) return -80;
+    var lo = -80, hi = 80;
+    for (var i = 0; i < 60; i++) { var mid = (lo + hi) / 2; if (pws(mid) < pw) lo = mid; else hi = mid; }
+    return (lo + hi) / 2;
+  }
+  function state(Tc, rh, p) { // rh 0..1
+    var ps = pws(Tc), pw = rh * ps, W = humRatio(pw, p);
+    return { T: Tc, rh: rh, pws: ps, pw: pw, W: W, h: enthalpy(Tc, W), Td: dewPoint(pw),
+             rhoDA: (p - pw) / (R_DA * (Tc + 273.15)) };
+  }
+  function rhFromDewPoint(Tc, TdC) { return Math.min(1, pws(TdC) / pws(Tc)); }
+  return { pws: pws, pressureFromElevM: pressureFromElevM, humRatio: humRatio, pwFromW: pwFromW,
+           enthalpy: enthalpy, dewPoint: dewPoint, state: state, rhFromDewPoint: rhFromDewPoint,
+           CP_DA: CP_DA, HFG: HFG };
+})();
+
+/* ===================== UNITS ===================== */
+var U = {
+  f2c: function (f) { return (f - 32) / 1.8; }, c2f: function (c) { return c * 1.8 + 32; },
+  ft2m: function (ft) { return ft * 0.3048; }, m2ft: function (m) { return m / 0.3048; },
+  ft3ToM3: function (v) { return v * 0.0283168; }, m3ToFt3: function (v) { return v / 0.0283168; },
+  kJkgToBtuLb: 0.429923, kJToBtu: 0.947817, kgToLb: 2.20462, kJToKWh: 1 / 3600
+};
+
+/* ===================== STATE & STORAGE ===================== */
+var KEY = 'windowCalc.v1';
+var DEFAULTS = { // Atlanta, spring morning
+  unitC: false, humAsTd: false,
+  tInF: 75, rhIn: 50, tOutF: 68, rhOut: 90, tdOutF: 65,
+  mode: 'dehum', seer: 15, ief: 1.6, price: 0.14, elevFt: 1010,
+  volFt3: 16000, ach: 2, hours: 3, margin: 1.5, advOpen: false
+};
+var S = load();
+var storageOk = true;
+function load() {
+  try { var raw = localStorage.getItem(KEY); if (raw) { var o = JSON.parse(raw); var out = {}; for (var k in DEFAULTS) out[k] = (k in o) ? o[k] : DEFAULTS[k]; return out; } }
+  catch (e) { storageOk = false; }
+  var d = {}; for (var k in DEFAULTS) d[k] = DEFAULTS[k]; return d;
+}
+function save() {
+  try { localStorage.setItem(KEY, JSON.stringify(S)); storageOk = true; }
+  catch (e) { storageOk = false; }
+  $('savedNote').textContent = storageOk ? 'Inputs are saved on this device and restored next time you open the page.' : 'Could not save inputs (storage unavailable in this browser context).';
+}
+
+/* ===================== DOM HELPERS ===================== */
+function $(id) { return document.getElementById(id); }
+function fmt(x, d) { return (Math.round(x * Math.pow(10, d)) / Math.pow(10, d)).toFixed(d); }
+function signed(x, d, unit) { var s = fmt(x, d); if (x > 0) s = '+' + s; return s + (unit || ''); }
+function cls(x, tol) { tol = tol || 0; return x > tol ? 'pos' : (x < -tol ? 'neg' : ''); }
+function tUnit() { return S.unitC ? '°C' : '°F'; }
+function dispT(f) { return S.unitC ? U.f2c(f) : f; }        // internal °F -> display
+function fromDispT(v) { return S.unitC ? U.c2f(v) : v; }     // display -> internal °F
+function dT(fDiff) { return S.unitC ? fDiff / 1.8 : fDiff; } // temperature difference
+
+/* ===================== INPUT WIRING ===================== */
+// Every input change goes through one path: update state, save, re-sync all inputs, re-render.
+// syncInputs() is what keeps a slider and its number box showing the same value.
+function commit() { save(); syncInputs(); render(); }
+function bindRange(rangeId, numId, set) {
+  var r = $(rangeId), n = $(numId);
+  var clamp = function (v) { return Math.min(parseFloat(r.max), Math.max(parseFloat(r.min), v)); };
+  r.addEventListener('input', function () { set(parseFloat(r.value)); commit(); });
+  // Live: apply typed values as soon as they are in range (so partial entries like "7" for 75 are ignored until complete).
+  n.addEventListener('input', function () { var v = parseFloat(n.value); if (isNaN(v) || v < parseFloat(r.min) || v > parseFloat(r.max)) return; set(v); save(); r.value = v; render(); });
+  // Commit: clamp out-of-range entries and normalize the display.
+  n.addEventListener('change', function () { var v = parseFloat(n.value); if (isNaN(v)) { commit(); return; } set(clamp(v)); commit(); });
+  n.addEventListener('keydown', function (e) { if (e.key === 'Enter') { n.blur(); } });
+}
+function setRange(rangeId, numId, min, max, step, v) {
+  var r = $(rangeId), n = $(numId);
+  r.min = min; r.max = max; r.step = step; r.value = v;
+  n.min = min; n.max = max; n.step = step;
+  var shown = fmt(v, step < 1 ? 1 : 0);
+  if (document.activeElement !== n) n.value = shown;   // don't fight the user while they type
+}
+function bindNumber(id, set) {
+  var el = $(id);
+  el.addEventListener('change', function () { var v = parseFloat(el.value); if (!isNaN(v)) { set(v); } commit(); });
+  el.addEventListener('keydown', function (e) { if (e.key === 'Enter') { el.blur(); } });
+}
+function setupInputs() {
+  bindRange('tIn', 'tInNum', function (v) { S.tInF = fromDispT(v); });
+  bindRange('rhIn', 'rhInNum', function (v) { S.rhIn = Math.min(100, Math.max(1, v)); });
+  bindRange('tOut', 'tOutNum', function (v) { S.tOutF = fromDispT(v); if (S.humAsTd) S.tdOutF = Math.min(S.tdOutF, S.tOutF); });
+  bindRange('hOut', 'hOutNum', function (v) {
+    if (S.humAsTd) { S.tdOutF = Math.min(fromDispT(v), S.tOutF); } else { S.rhOut = Math.min(100, Math.max(1, v)); }
+  });
+  ['seer', 'ief', 'price', 'ach', 'hours', 'margin'].forEach(function (id) {
+    bindNumber(id, function (v) { var el = $(id); S[id] = Math.min(parseFloat(el.max), Math.max(parseFloat(el.min), v)); });
+  });
+  bindNumber('elev', function (v) { S.elevFt = S.unitC ? U.m2ft(v) : v; });
+  bindNumber('vol', function (v) { S.volFt3 = Math.max(100, S.unitC ? U.m3ToFt3(v) : v); });
+  $('mode').addEventListener('change', function () { S.mode = $('mode').value; commit(); });
+  $('advDetails').addEventListener('toggle', function () { S.advOpen = $('advDetails').open; save(); });
+  $('unitF').addEventListener('click', function () { S.unitC = false; snapTemps(); commit(); });
+  $('unitC').addEventListener('click', function () { S.unitC = true; snapTemps(); commit(); });
+  $('humRH').addEventListener('click', function () { syncHumidityModes(); S.humAsTd = false; commit(); });
+  $('humTD').addEventListener('click', function () { syncHumidityModes(); S.humAsTd = true; commit(); });
+  $('reset').addEventListener('click', function () { for (var k in DEFAULTS) S[k] = DEFAULTS[k]; commit(); });
+}
+// After a unit switch, round stored temperatures to the new slider step so the slider and number box agree exactly.
+function snapTemps() {
+  var step = S.unitC ? 0.5 : 1;
+  ['tInF', 'tOutF', 'tdOutF'].forEach(function (k) { S[k] = fromDispT(Math.round(dispT(S[k]) / step) * step); });
+}
+// Keep RH and dew point consistent when switching input type: convert the value that was being edited into the other.
+function syncHumidityModes() {
+  var p = PHYS.pressureFromElevM(U.ft2m(S.elevFt)), Tc = U.f2c(S.tOutF);
+  if (S.humAsTd) { S.rhOut = Math.round(PHYS.rhFromDewPoint(Tc, U.f2c(S.tdOutF)) * 100); }
+  else { S.tdOutF = Math.round(U.c2f(PHYS.state(Tc, S.rhOut / 100, p).Td) * 2) / 2; }
+}
+function syncInputs() {
+  $('unitF').setAttribute('aria-pressed', String(!S.unitC)); $('unitC').setAttribute('aria-pressed', String(S.unitC));
+  $('humRH').setAttribute('aria-pressed', String(!S.humAsTd)); $('humTD').setAttribute('aria-pressed', String(S.humAsTd));
+  var tu = tUnit(); $('tInUnit').textContent = tu; $('tOutUnit').textContent = tu;
+  var tMin = S.unitC ? 10 : 50, tMax = S.unitC ? 35 : 95, tStep = S.unitC ? 0.5 : 1;
+  var oMin = S.unitC ? 0 : 30, oMax = S.unitC ? 40 : 105;
+  setRange('tIn', 'tInNum', tMin, tMax, tStep, dispT(S.tInF));
+  setRange('rhIn', 'rhInNum', 1, 100, 1, S.rhIn);
+  setRange('tOut', 'tOutNum', oMin, oMax, tStep, dispT(S.tOutF));
+  if (S.humAsTd) {
+    $('hOutLabel').textContent = 'Dew point'; $('hOutUnit').textContent = tu;
+    setRange('hOut', 'hOutNum', S.unitC ? -10 : 15, S.unitC ? 30 : 85, tStep, dispT(Math.min(S.tdOutF, S.tOutF)));
+  } else {
+    $('hOutLabel').textContent = 'Relative humidity'; $('hOutUnit').textContent = '%';
+    setRange('hOut', 'hOutNum', 1, 100, 1, S.rhOut);
+  }
+  $('mode').value = S.mode; $('seer').value = S.seer; $('ief').value = S.ief; $('price').value = S.price;
+  $('elevUnit').textContent = S.unitC ? 'm' : 'ft';
+  $('elev').value = Math.round(S.unitC ? U.ft2m(S.elevFt) : S.elevFt);
+  $('volUnit').textContent = S.unitC ? 'm³' : 'ft³';
+  $('vol').value = Math.round(S.unitC ? U.ft3ToM3(S.volFt3) : S.volFt3);
+  $('ach').value = S.ach; $('hours').value = S.hours; $('margin').value = S.margin;
+  $('advDetails').open = !!S.advOpen;
+}
+
+/* ===================== CALCULATION ===================== */
+function compute(st) {
+  var S = st || window.S;   // shadow: lets the self-test evaluate arbitrary states
+  var p = PHYS.pressureFromElevM(U.ft2m(S.elevFt));
+  var TcIn = U.f2c(S.tInF), TcOut = U.f2c(S.tOutF);
+  var rhOut = S.humAsTd ? PHYS.rhFromDewPoint(TcOut, U.f2c(Math.min(S.tdOutF, S.tOutF))) : S.rhOut / 100;
+  var inS = PHYS.state(TcIn, S.rhIn / 100, p), outS = PHYS.state(TcOut, rhOut, p);
+  var Vm3 = U.ft3ToM3(S.volFt3) * S.ach * S.hours;   // volume exchanged over the session
+  var mDA = Vm3 * outS.rhoDA;                        // kg dry air brought in (and displaced)
+  var dh = outS.h - inS.h, dW = outS.W - inS.W, dT = outS.T - inS.T;
+  var totalKJ = mDA * dh, sensKJ = mDA * PHYS.CP_DA * dT, latKJ = totalKJ - sensKJ;
+  var waterKg = mDA * dW;
+  var cop = S.seer * 0.293;
+  var r = { p: p, inS: inS, outS: outS, Vm3: Vm3, mDA: mDA, dh: dh, dW: dW, dT: dT,
+            totalKJ: totalKJ, sensKJ: sensKJ, latKJ: latKJ, waterKg: waterKg, cop: cop };
+  if (S.mode === 'ac') {
+    r.kWh = totalKJ * U.kJToKWh / cop;               // + costs, − saves
+    r.cost = r.kWh * S.price;
+  } else {
+    r.dehumKWh = waterKg / S.ief;                    // + costs, − avoided
+    r.reheatKJ = waterKg > 0 ? waterKg * PHYS.HFG + r.dehumKWh * 3600 : 0;
+    r.roomHeatKJ = sensKJ + r.reheatKJ;              // net heat left in the room after dehumidifier catches up
+    r.kWh = r.dehumKWh; r.cost = r.kWh * S.price;
+  }
+  // Break-even outdoor dew point at the current outdoor temperature
+  if (S.mode === 'ac') {
+    var Wbe = (inS.h - PHYS.CP_DA * TcOut) / (2501 + 1.86 * TcOut);
+    if (Wbe <= 0) r.beTd = null; // too hot for any humidity
+    else { var td = PHYS.dewPoint(PHYS.pwFromW(Wbe, p)); r.beTd = td >= TcOut ? Infinity : td; }
+  } else { r.beTd = inS.Td; }
+  // Verdict
+  var m = S.margin;
+  if (S.mode === 'ac') {
+    if (dh < -m) r.v = 'win'; else if (dh > m) r.v = 'lose'; else r.v = 'meh';
+  } else {
+    var dWtol = 0.0004; // ≈ 3 grains/lb
+    if (dW > dWtol) r.v = 'lose';
+    else if (dW < -dWtol && dT <= 0) r.v = 'win';
+    else if (dW < -dWtol && dT > 0) r.v = 'meh';   // dries but warms
+    else r.v = 'meh';
+  }
+  return r;
+}
+
+/* ===================== RENDER ===================== */
+function render() {
+  var r = compute(), inS = r.inS, outS = r.outS, tu = tUnit();
+  var TdIn = dispT(U.c2f(inS.Td)), TdOut = dispT(U.c2f(outS.Td));
+  $('inDerived').textContent = 'Dew point ' + fmt(TdIn, 1) + tu + ' · ' + fmt(inS.W * 7000, 0) + ' grains/lb · enthalpy ' + fmt(inS.h, 1) + ' kJ/kg';
+  $('outDerived').textContent = (S.humAsTd ? 'RH ' + fmt(outS.rh * 100, 0) + '%' : 'Dew point ' + fmt(TdOut, 1) + tu) + ' · ' + fmt(outS.W * 7000, 0) + ' grains/lb · enthalpy ' + fmt(outS.h, 1) + ' kJ/kg';
+  $('modeHint').textContent = S.mode === 'ac'
+    ? 'The AC removes both heat and moisture; the comparison is total enthalpy through the coil.'
+    : 'Cool air is comfort, not avoided kWh. Imported moisture is charged to the dehumidifier, which then reheats the room.';
+
+  // Verdict
+  var vb = $('verdict'); vb.className = 'verdict ' + r.v;
+  var dTd = TdOut - TdIn;
+  var dTdisp = Math.abs(dT(U.c2f(r.dT) - 32));
+  var tempWord = Math.abs(dTdisp) < 0.5 ? 'about the same temperature as' : fmt(dTdisp, 1) + tu + (r.dT < 0 ? ' cooler than' : ' warmer than');
+  var grDiff = r.dW * 7000;
+  var moistWord = Math.abs(grDiff) < 3 ? 'carries about the same moisture as' : (grDiff < 0 ? (grDiff < -15 ? 'much drier than' : 'drier than') : (grDiff > 15 ? 'much wetter than' : 'wetter than'));
+  var dp = ' (dew point ' + fmt(TdOut, 0) + tu + ' outside vs ' + fmt(TdIn, 0) + tu + ' inside)';
+  // Sentence built from measured directions so it never claims "cooler" for warmer air.
+  var lead = 'Outside air is ' + tempWord + ' your indoor air and ' + moistWord + ' it' + dp + '.';
+  var title, body;
+  if (r.v === 'win') {
+    title = 'Open the windows';
+    if (S.mode === 'ac') body = lead + (r.dT > 0 ? ' Even though it is warmer, its total heat content is lower because it is so much drier, so the AC has less to remove.' : ' Its total heat content is lower, so the AC has less to remove.');
+    else body = lead + ' Cooler and drier is the easy case: it helps comfort and cuts the dehumidifier\u2019s work.';
+  } else if (r.v === 'lose') {
+    title = 'Keep them closed';
+    if (r.dT < 0) body = lead + ' The moisture you would import outweighs the sensible cooling' + (S.mode === 'ac' ? ': outdoor enthalpy is higher than indoor.' : ', and with the AC off there is no cooling bill to offset it.');
+    else if (r.dW < 0) body = lead + ' It is drier, but the extra heat is larger than the moisture saving.';
+    else body = lead + ' Nothing to gain from exchanging air.';
+  } else {
+    title = 'Marginal';
+    if (S.mode !== 'ac' && r.dW < 0 && r.dT > 0) body = lead + ' Opening up would help the dehumidifier but warm the house; worth it only if you are comfortable with the temperature.';
+    else if (S.mode !== 'ac') body = lead + ' Little to gain or lose on the dehumidifier; decide on comfort and fresh air.';
+    else body = lead + ' Total heat content is within your marginal band (' + signed(r.dh, 1, ' kJ/kg') + '). Real sensors drift a few percent RH, so treat this as a coin flip and decide on comfort.';
+  }
+  $('vTitle').textContent = title; $('vBody').textContent = body;
+  var money;
+  if (S.mode === 'ac') {
+    money = (r.kWh < 0 ? 'Saves about ' : 'Costs about ') + fmt(Math.abs(r.kWh), 2) + ' kWh ($' + fmt(Math.abs(r.cost), 2) + ') of AC electricity over ' + S.hours + ' h at ' + S.ach + ' air changes/h.';
+  } else {
+    money = r.kWh > 0 ? 'Adds about ' + fmt(r.kWh, 2) + ' kWh ($' + fmt(r.cost, 2) + ') of dehumidifier run time to remove ' + fmt(r.waterKg, 1) + ' L of imported water.'
+          : (r.kWh < 0 ? 'Avoids about ' + fmt(-r.kWh, 2) + ' kWh ($' + fmt(-r.cost, 2) + ') of dehumidifier run time; the outdoor air carries ' + fmt(-r.waterKg, 1) + ' L less water.' : 'No net change in dehumidifier load.');
+  }
+  var beTxt;
+  if (r.beTd === null) beTxt = 'At ' + fmt(dispT(S.tOutF), 0) + tu + ' outside, no humidity level makes ventilation pay.';
+  else if (r.beTd === Infinity) beTxt = 'At ' + fmt(dispT(S.tOutF), 0) + tu + ' outside, ventilation wins at any humidity.';
+  else beTxt = 'Break-even: at ' + fmt(dispT(S.tOutF), 0) + tu + ' outside, windows win when the outdoor dew point is below ' + fmt(dispT(U.c2f(r.beTd)), 0) + tu + '.';
+  $('vMoney').innerHTML = money + '<br>' + beTxt;
+
+  // Property table
+  var rows = [
+    ['Temperature', fmt(dispT(S.tInF), 1) + tu, fmt(dispT(S.tOutF), 1) + tu, signed(dT(U.c2f(r.dT) - 32), 1, tu), cls(r.dT)],
+    ['Relative humidity', fmt(inS.rh * 100, 0) + '%', fmt(outS.rh * 100, 0) + '%', signed((outS.rh - inS.rh) * 100, 0, '%'), ''],
+    ['Dew point', fmt(TdIn, 1) + tu, fmt(TdOut, 1) + tu, signed(dTd, 1, tu), cls(dTd)],
+    ['Humidity ratio', fmt(inS.W * 7000, 0) + ' gr/lb', fmt(outS.W * 7000, 0) + ' gr/lb', signed(r.dW * 7000, 0, ' gr/lb'), cls(r.dW)],
+    ['', fmt(inS.W * 1000, 2) + ' g/kg', fmt(outS.W * 1000, 2) + ' g/kg', signed(r.dW * 1000, 2, ' g/kg'), cls(r.dW)],
+    ['Enthalpy', fmt(inS.h, 1) + ' kJ/kg', fmt(outS.h, 1) + ' kJ/kg', signed(r.dh, 1, ' kJ/kg'), cls(r.dh)],
+    ['', fmt(hIP(S.tInF, inS.W), 1) + ' Btu/lb', fmt(hIP(S.tOutF, outS.W), 1) + ' Btu/lb', signed(hIP(S.tOutF, outS.W) - hIP(S.tInF, inS.W), 1, ' Btu/lb'), cls(r.dh)],
+    ['Vapor pressure', fmt(inS.pw / 1000, 2) + ' kPa', fmt(outS.pw / 1000, 2) + ' kPa', signed((outS.pw - inS.pw) / 1000, 2, ' kPa'), '']
+  ];
+  $('propRows').innerHTML = rows.map(function (x) {
+    return '<tr><td>' + x[0] + '</td><td class="in">' + x[1] + '</td><td class="out">' + x[2] + '</td><td class="' + x[4] + '">' + x[3] + '</td></tr>';
+  }).join('');
+
+  // Load table
+  var kbtu = function (kj) { return signed(kj * U.kJToBtu / 1000, 1, ' kBtu'); };
+  var lrows = [
+    ['Air exchanged', fmt(S.unitC ? r.Vm3 : U.m3ToFt3(r.Vm3), 0) + (S.unitC ? ' m³' : ' ft³') + ' (' + fmt(r.mDA, 0) + ' kg dry air)', ''],
+    ['Sensible heat brought in', kbtu(r.sensKJ) + ' (' + signed(r.sensKJ * U.kJToKWh, 2, ' kWh thermal') + ')', cls(r.sensKJ)],
+    ['Latent heat (moisture) brought in', kbtu(r.latKJ) + ' (' + signed(r.waterKg, 1, ' L water') + ')', cls(r.latKJ)],
+    ['Total heat brought in', kbtu(r.totalKJ) + ' (' + signed(r.totalKJ * U.kJToKWh, 2, ' kWh thermal') + ')', cls(r.totalKJ)]
+  ];
+  var notes = '';
+  if (S.mode === 'ac') {
+    lrows.push(['AC electricity (COP ' + fmt(r.cop, 1) + ')', signed(r.kWh, 2, ' kWh') + ' = $' + signed(r.cost, 2), cls(r.kWh)]);
+    $('loadSub').textContent = 'Positive numbers are extra load your AC must remove; negative numbers are free cooling.';
+    notes = '<p>Air barometric pressure at this elevation: ' + fmt(r.p / 1000, 1) + ' kPa. Pressure at Atlanta’s elevation raises the humidity ratio about 4% versus sea-level tables, so the latent share is slightly larger than a sea-level chart would suggest.</p>';
+  } else {
+    lrows.push(['Dehumidifier electricity (IEF ' + fmt(S.ief, 2) + ')', signed(r.dehumKWh, 2, ' kWh') + ' = $' + signed(r.cost, 2), cls(r.dehumKWh)]);
+    lrows.push(['Heat the dehumidifier dumps back into the room', kbtu(r.reheatKJ), cls(r.reheatKJ)]);
+    lrows.push(['Net heat left in the room', kbtu(r.roomHeatKJ), cls(r.roomHeatKJ)]);
+    $('loadSub').textContent = 'With the AC off, cool air has no dollar value; moisture is charged to the dehumidifier.';
+    var tempRiseC = r.roomHeatKJ / (U.ft3ToM3(S.volFt3) * 1.16 * 1.006);
+    notes = '<p>If the house air alone absorbed that net heat it would shift the temperature about ' + signed(dT(U.c2f(tempRiseC) - 32), 1, tu) + '. Real houses have far more thermal mass than air, so the actual change is much smaller and slower, but the direction is the point.</p>';
+  }
+  $('loadRows').innerHTML = lrows.map(function (x) { return '<tr><td>' + x[0] + '</td><td class="' + x[2] + '">' + x[1] + '</td></tr>'; }).join('');
+  $('loadNotes').innerHTML = notes;
+
+  $('chartSub').textContent = S.mode === 'ac'
+    ? 'Shaded by outdoor enthalpy relative to your indoor air (' + fmt(inS.h, 1) + ' kJ/kg). The curve is equal enthalpy.'
+    : 'Shaded by outdoor dew point relative to indoor (' + fmt(TdIn, 0) + tu + '). Cooler and drier wins; drier but warmer is a trade-off.';
+  drawChart(r);
+}
+
+/* ===================== CHART ===================== */
+function drawChart(r) {
+  var c = $('chart'), ctx = c.getContext('2d'), W = c.width, H = c.height;
+  var padL = 58, padR = 16, padT = 14, padB = 44;
+  var pw = W - padL - padR, ph = H - padT - padB;
+  var tMinF = 35, tMaxF = 100, dMinF = 15, dMaxF = 85;  // axes in °F internally
+  var p = r.p, hIn = r.inS.h, TdInC = r.inS.Td, TInC = r.inS.T, m = S.margin;
+  ctx.clearRect(0, 0, W, H);
+  // Field: color each cell
+  var step = 3;
+  for (var px = 0; px < pw; px += step) {
+    var tf = tMinF + (px / pw) * (tMaxF - tMinF), tc = U.f2c(tf);
+    for (var py = 0; py < ph; py += step) {
+      var df = dMaxF - (py / ph) * (dMaxF - dMinF), dc = U.f2c(df);
+      var col;
+      if (df > tf) { col = 'rgb(217,223,227)'; }
+      else {
+        var Wo = PHYS.humRatio(PHYS.pws(dc), p);
+        if (S.mode === 'ac') {
+          var d = PHYS.enthalpy(tc, Wo) - hIn;
+          if (Math.abs(d) <= m) col = 'rgb(232,223,165)';
+          else { var a = Math.min(1, Math.abs(d) / 25); col = d < 0 ? mix([233,244,238],[122,196,153],a) : mix([250,236,234],[224,150,142],a); }
+        } else {
+          var dd = dc - TdInC, dtc = tc - TInC;
+          if (Math.abs(dd) < 0.6) col = 'rgb(232,223,165)';
+          else if (dd > 0) { col = mix([250,236,234],[224,150,142], Math.min(1, dd / 12)); }
+          else if (dtc <= 0) { col = mix([233,244,238],[122,196,153], Math.min(1, -dd / 12)); }
+          else col = 'rgb(240,234,196)';
+        }
+      }
+      ctx.fillStyle = col; ctx.fillRect(padL + px, padT + py, step, step);
+    }
+  }
+  // Grid & axes
+  ctx.strokeStyle = 'rgba(31,42,51,0.12)'; ctx.lineWidth = 1; ctx.font = '12px "Avenir Next","Segoe UI",Helvetica,Arial,sans-serif'; ctx.fillStyle = '#5b6b77';
+  var xTicks = S.unitC ? [5,10,15,20,25,30,35] : [40,50,60,70,80,90,100];
+  var yTicks = S.unitC ? [-5,0,5,10,15,20,25] : [20,30,40,50,60,70,80];
+  function X(tf) { return padL + (tf - tMinF) / (tMaxF - tMinF) * pw; }
+  function Y(df) { return padT + (dMaxF - df) / (dMaxF - dMinF) * ph; }
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  xTicks.forEach(function (t) { var tf = S.unitC ? U.c2f(t) : t; if (tf < tMinF || tf > tMaxF) return; var x = X(tf); ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, padT + ph); ctx.stroke(); ctx.fillText(String(t), x, padT + ph + 6); });
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  yTicks.forEach(function (t) { var df = S.unitC ? U.c2f(t) : t; if (df < dMinF || df > dMaxF) return; var y = Y(df); ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(padL + pw, y); ctx.stroke(); ctx.fillText(String(t), padL - 8, y); });
+  ctx.fillStyle = '#1f2a33'; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+  ctx.fillText('Outdoor temperature (' + tUnit() + ')', padL + pw / 2, H - 8);
+  ctx.save(); ctx.translate(14, padT + ph / 2); ctx.rotate(-Math.PI / 2); ctx.fillText('Outdoor dew point (' + tUnit() + ')', 0, 0); ctx.restore();
+  // Indoor reference lines
+  ctx.setLineDash([4, 4]); ctx.strokeStyle = 'rgba(42,127,158,0.7)'; ctx.lineWidth = 1.2;
+  var tdInF = U.c2f(TdInC), tInF = U.c2f(TInC);
+  ctx.beginPath(); ctx.moveTo(padL, Y(tdInF)); ctx.lineTo(padL + pw, Y(tdInF)); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(X(tInF), padT); ctx.lineTo(X(tInF), padT + ph); ctx.stroke();
+  ctx.setLineDash([]);
+  // Equal-enthalpy curve (AC mode)
+  if (S.mode === 'ac') {
+    ctx.strokeStyle = 'rgba(31,42,51,0.75)'; ctx.lineWidth = 1.5; ctx.beginPath(); var started = false;
+    for (var tf2 = tMinF; tf2 <= tMaxF; tf2 += 0.5) {
+      var tc2 = U.f2c(tf2), Wbe = (hIn - PHYS.CP_DA * tc2) / (2501 + 1.86 * tc2);
+      if (Wbe <= 0) break;
+      var tdc = PHYS.dewPoint(PHYS.pwFromW(Wbe, p)), tdf = U.c2f(tdc);
+      if (tdf > tf2 || tdf < dMinF || tdf > dMaxF) { started = false; continue; }
+      if (!started) { ctx.moveTo(X(tf2), Y(tdf)); started = true; } else ctx.lineTo(X(tf2), Y(tdf));
+    }
+    ctx.stroke();
+  }
+  // Points
+  function dot(tf, df, fill, ring, label) {
+    var x = Math.max(padL, Math.min(padL + pw, X(tf))), y = Math.max(padT, Math.min(padT + ph, Y(df)));
+    ctx.beginPath(); ctx.arc(x, y, 7, 0, Math.PI * 2); ctx.fillStyle = fill; ctx.fill(); ctx.lineWidth = 2.5; ctx.strokeStyle = ring; ctx.stroke();
+    ctx.fillStyle = '#1f2a33'; ctx.font = '600 12.5px "Avenir Next","Segoe UI",Helvetica,Arial,sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText(label, x + 11, y);
+  }
+  dot(tInF, tdInF, '#ffffff', '#2a7f9e', 'Inside');
+  dot(S.tOutF, U.c2f(r.outS.Td), '#c97a1f', '#ffffff', 'Outside');
+}
+function hIP(tF, W) { return 0.240 * tF + W * (1061 + 0.444 * tF); } // Btu/lb, 0°F reference (ASHRAE IP)
+function mix(a, b, t) { return 'rgb(' + Math.round(a[0] + (b[0] - a[0]) * t) + ',' + Math.round(a[1] + (b[1] - a[1]) * t) + ',' + Math.round(a[2] + (b[2] - a[2]) * t) + ')'; }
+
+/* ===================== SELF TEST (console only) ===================== */
+function selfTest() {
+  var fails = [], n = 0;
+  function ok(cond, name, detail) { n++; if (!cond) fails.push(name + (detail !== undefined ? ' — got ' + detail : '')); }
+  function near(a, b, tol, name) { ok(Math.abs(a - b) <= tol, name, fmt(a, 4) + ' vs ' + fmt(b, 4) + ' (±' + tol + ')'); }
+  function st(over) { var o = {}; for (var k in DEFAULTS) o[k] = DEFAULTS[k]; for (var k2 in over) o[k2] = over[k2]; return o; }
+  try {
+    // Saturation pressure (Buck) against reference values
+    near(PHYS.pws(0), 611.21, 0.01, 'pws(0°C)');
+    near(PHYS.pws(20), 2339, 5, 'pws(20°C) ≈ 2339 Pa');
+    near(PHYS.pws(30), 4247, 8, 'pws(30°C) ≈ 4247 Pa');
+    // Dew point inverts saturation pressure; saturated air has Td = T
+    [-10, 0, 12.5, 24, 35].forEach(function (t) { near(PHYS.dewPoint(PHYS.pws(t)), t, 0.001, 'dewPoint(pws(' + t + '))'); });
+    near(PHYS.state(25, 1, 100000).Td, 25, 0.001, 'saturated air Td = T');
+    // Humidity ratio / vapor pressure are mutual inverses
+    var p0 = 97680, Wt = PHYS.humRatio(1500, p0); near(PHYS.pwFromW(Wt, p0), 1500, 1e-6, 'pwFromW(humRatio(pw)) = pw');
+    near(PHYS.rhFromDewPoint(20, 20), 1, 1e-9, 'rhFromDewPoint(T,T) = 1');
+    near(PHYS.rhFromDewPoint(20, PHYS.state(20, 0.6, p0).Td), 0.6, 1e-3, 'rhFromDewPoint round trip');
+    // Atlanta pressure and indoor reference state (75°F / 50% RH)
+    var pAtl = PHYS.pressureFromElevM(U.ft2m(1010)); near(pAtl / 1000, 97.68, 0.1, 'Atlanta pressure ≈ 97.68 kPa');
+    var inS = PHYS.state(U.f2c(75), 0.5, pAtl);
+    near(inS.W * 7000, 67, 1, 'indoor 75/50: ≈67 grains/lb');
+    near(inS.h, 48.4, 0.2, 'indoor 75/50: ≈48.4 kJ/kg');
+    near(hIP(75, inS.W), 28.5, 0.3, 'indoor 75/50: ≈28.5 Btu/lb (IP chart value)');
+    near(U.c2f(inS.Td), 55.1, 0.3, 'indoor 75/50: dew point ≈55°F');
+    var spring = PHYS.state(U.f2c(68), 0.9, pAtl), fall = PHYS.state(U.f2c(68), 0.6, pAtl);
+    near(spring.h, 54.9, 0.2, 'spring 68/90: ≈54.9 kJ/kg'); near(U.c2f(spring.Td), 65.0, 0.3, 'spring dew point ≈65°F');
+    near(fall.h, 43.1, 0.2, 'fall 68/60: ≈43.1 kJ/kg'); near(U.c2f(fall.Td), 53.6, 0.3, 'fall dew point ≈53.6°F');
+    ok(spring.h > inS.h && fall.h < inS.h, 'cool-humid air has higher enthalpy than indoor; cool-dry lower');
+    // Units
+    near(U.f2c(212), 100, 1e-9, 'f2c(212)'); near(U.c2f(-40), -40, 1e-9, 'c2f(-40)'); near(U.ft3ToM3(1000), 28.3168, 1e-3, 'ft3ToM3');
+    // Verdicts for the canonical scenarios
+    ok(compute(st({ mode: 'dehum' })).v === 'lose', 'spring morning, dehumidifier → keep closed', compute(st({ mode: 'dehum' })).v);
+    ok(compute(st({ mode: 'ac' })).v === 'lose', 'spring morning, AC → keep closed', compute(st({ mode: 'ac' })).v);
+    ok(compute(st({ mode: 'dehum', rhOut: 60 })).v === 'win', 'fall evening, dehumidifier → open', compute(st({ mode: 'dehum', rhOut: 60 })).v);
+    ok(compute(st({ mode: 'ac', rhOut: 60 })).v === 'win', 'fall evening, AC → open', compute(st({ mode: 'ac', rhOut: 60 })).v);
+    var warmDry = compute(st({ mode: 'ac', tOutF: 84, humAsTd: true, tdOutF: 40 }));
+    ok(warmDry.v === 'win' && warmDry.dT > 0 && warmDry.dW < 0, 'warm-but-dry air, AC → open (lower enthalpy despite higher T)', warmDry.v);
+    var warmDryDh = compute(st({ mode: 'dehum', tOutF: 84, humAsTd: true, tdOutF: 40 }));
+    ok(warmDryDh.v === 'meh', 'warm-but-dry air, dehumidifier → marginal trade-off', warmDryDh.v);
+    var same = compute(st({ mode: 'ac', tOutF: 75, rhOut: 50 }));
+    ok(same.v === 'meh' && Math.abs(same.dh) < 1e-9, 'identical air → marginal, zero enthalpy difference', same.v);
+    // Dew-point input equals the RH it was derived from
+    var viaRH = compute(st({ rhOut: 90 })), viaTd = compute(st({ humAsTd: true, tdOutF: U.c2f(viaRH.outS.Td) }));
+    near(viaTd.outS.h, viaRH.outS.h, 1e-6, 'RH input and equivalent dew-point input give the same state');
+    // Energy bookkeeping
+    var r = compute(st({ mode: 'dehum' }));
+    near(r.sensKJ + r.latKJ, r.totalKJ, 1e-6, 'sensible + latent = total');
+    near(r.mDA, r.Vm3 * r.outS.rhoDA, 1e-6, 'dry-air mass = volume × density');
+    near(r.dehumKWh, r.waterKg / DEFAULTS.ief, 1e-9, 'dehumidifier kWh = liters ÷ IEF');
+    ok(r.reheatKJ >= r.waterKg * PHYS.HFG, 'dehumidifier reheat ≥ latent heat of condensed water');
+    var ra = compute(st({ mode: 'ac' }));
+    near(ra.kWh, ra.totalKJ / 3600 / (DEFAULTS.seer * 0.293), 1e-9, 'AC kWh = thermal kWh ÷ COP');
+    ok(compute(st({ mode: 'ac', rhOut: 60 })).kWh < 0, 'favorable air yields negative (saved) kWh');
+    // Break-even dew point: at that dew point outdoor enthalpy equals indoor
+    var be = compute(st({ mode: 'ac' })), rhBE = PHYS.rhFromDewPoint(U.f2c(68), be.beTd);
+    near(PHYS.state(U.f2c(68), rhBE, pAtl).h, be.inS.h, 0.01, 'AC break-even dew point gives equal enthalpy');
+    ok(be.beTd > U.f2c(57) && be.beTd < U.f2c(61), 'AC break-even at 68°F is ≈59°F dew point', fmt(U.c2f(be.beTd), 1));
+    near(compute(st({ mode: 'dehum' })).beTd, inS.Td, 1e-9, 'dehumidifier break-even = indoor dew point');
+    ok(compute(st({ mode: 'ac', tOutF: 125, rhOut: 5 })).beTd === null, 'very hot air (125°F): no humidity makes ventilation pay');
+    // Storage round trip (does not touch saved inputs)
+    try { var k = KEY + '.selftest'; localStorage.setItem(k, '{"ok":1}'); ok(JSON.parse(localStorage.getItem(k)).ok === 1, 'localStorage round trip'); localStorage.removeItem(k); }
+    catch (e) { console.info('[window-calc] localStorage unavailable in this context; inputs will not persist.'); }
+  } catch (e) { fails.push('exception during self-test: ' + (e && e.message)); }
+  if (fails.length) { console.error('[window-calc] self-test: ' + fails.length + ' of ' + n + ' checks FAILED'); fails.forEach(function (f) { console.error('  ✗ ' + f); }); }
+  else console.info('[window-calc] self-test: all ' + n + ' checks passed');
+  return fails.length === 0;
+}
+
+/* ===================== BOOT ===================== */
+setupInputs(); syncInputs(); save(); render(); selfTest();
+</script>
+</body>
+</html>
