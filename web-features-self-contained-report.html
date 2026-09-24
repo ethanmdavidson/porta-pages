@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Web features for a self-contained HTML file</title>
+<meta name="description" content="Which web-features work in one offline HTML file. Loads the web-features dataset from a CDN and caches it locally.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%232B5C8A'/%3E%3Crect x='3' y='7' width='10' height='2' fill='%23F5F6F4'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --paper: #F5F6F4; --paper-2: #EBEEEA; --ink: #1C2733; --ink-2: #4A5561; --muted: #6D7680; --rule: #D5DAD6;
+    --blue: #2B5C8A; --blue-soft: #DCE7F1;
+    --ok: #2E7D57; --ok-soft: #DDEEE4;
+    --caveat: #B07A1E; --caveat-soft: #F6EBD3;
+    --origin: #6B4E9B; --origin-soft: #E8E0F3;
+    --network: #8E3B46; --network-soft: #F2DFE2;
+    --permission: #8E3B46; --permission-soft: #F2DFE2;
+    --n_a: #6D7680; --n_a-soft: #E5E8E6;
+    --sans: "Avenir Next", "Segoe UI Variable Text", "Segoe UI", "Helvetica Neue", Helvetica, system-ui, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    color-scheme: light dark;
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+    --paper: #151A20; --paper-2: #1D242C; --ink: #E6EAEE; --ink-2: #B8C0C8; --muted: #8A949E; --rule: #2E363F;
+    --blue: #7FB0DC; --blue-soft: #223449;
+    --ok: #6CC49A; --ok-soft: #1E3A2D; --caveat: #E0B25E; --caveat-soft: #3F3218;
+    --origin: #B79BE0; --origin-soft: #322944; --network: #E08A96; --network-soft: #44262B;
+    --permission: #E08A96; --permission-soft: #44262B; --n_a: #8A949E; --n_a-soft: #262D35;
+  } }
+  html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+  *, *::before, *::after { box-sizing: inherit; }
+  [hidden] { display: none !important; } /* author display rules must not defeat the hidden attribute */
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 15px/1.5 var(--sans); -webkit-text-size-adjust: 100%; }
+  a { color: var(--blue); }
+  code, .mono { font-family: var(--mono); font-size: .86em; }
+  :focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+  button, input, select { font: inherit; color: inherit; }
+
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 0 20px; }
+
+  /* ---------- header ---------- */
+  header { padding: 40px 0 28px; border-bottom: 1px solid var(--rule); }
+  h1 { font-size: clamp(26px, 3.4vw, 38px); line-height: 1.15; font-weight: 600; letter-spacing: -0.015em; margin: 0 0 12px; max-width: 24ch; }
+  .lede { max-width: 66ch; color: var(--ink-2); margin: 0 0 22px; }
+  .lede strong { color: var(--ink); font-weight: 600; }
+
+  .ledger { display: grid; grid-template-columns: 1fr; gap: 10px; }
+  .bar { display: flex; height: 34px; border-radius: 6px; overflow: hidden; background: var(--paper-2); }
+  .bar button { border: 0; padding: 0; margin: 0; cursor: pointer; background: var(--seg); color: #fff; font-weight: 600; font-size: 13px; min-width: 0; position: relative; transition: filter .15s; }
+  .bar button:hover, .bar button[aria-pressed="true"] { filter: brightness(1.1); }
+  .bar button[aria-pressed="false"] { opacity: .35; }
+  .bar button span { position: absolute; inset: 0; display: grid; place-items: center; overflow: hidden; white-space: nowrap; padding: 0 6px; }
+  .bar button.tiny span { visibility: hidden; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13.5px; color: var(--ink-2); }
+  .legend button { border: 0; background: none; padding: 2px 0; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; color: inherit; }
+  .legend button[aria-pressed="false"] { opacity: .45; text-decoration: line-through; }
+  .swatch { width: 10px; height: 10px; border-radius: 2px; background: var(--seg); flex: none; }
+  .legend b { color: var(--ink); font-weight: 600; }
+
+  .data-status { margin: -8px 0 18px; font-size: 13.5px; color: var(--muted); }
+  .data-status.err { color: var(--network); }
+  .data-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+  .data-actions button { padding: 5px 10px; border: 1px solid var(--rule); border-radius: 6px; background: var(--paper-2); cursor: pointer; font-size: 13.5px; }
+  .data-actions button:hover { border-color: var(--blue); }
+  .data-actions button#reload { border-color: var(--blue); color: var(--blue); font-weight: 600; }
+  .loading { padding: 60px 0; display: grid; justify-items: start; gap: 14px; color: var(--ink-2); }
+  .loading.err { color: var(--network); }
+  .loading.err .spinner { display: none; }
+  .loading p { margin: 0; max-width: 60ch; }
+  .loading button { padding: 6px 12px; border: 1px solid var(--rule); border-radius: 6px; background: var(--paper-2); cursor: pointer; }
+  .spinner { width: 22px; height: 22px; border-radius: 50%; border: 3px solid var(--rule); border-top-color: var(--blue); animation: spin .9s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .method { margin-top: 20px; font-size: 13.5px; color: var(--muted); max-width: 80ch; }
+  .method summary { cursor: pointer; color: var(--ink-2); }
+  .method p { margin: 8px 0 0; }
+
+  /* ---------- body ---------- */
+  .layout { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 32px; padding: 26px 0 60px; align-items: start; }
+  @media (max-width: 860px) { .layout { grid-template-columns: 1fr; gap: 18px; } .rail { position: static !important; } }
+
+  .rail { position: sticky; top: 16px; display: grid; gap: 20px; font-size: 14px; }
+  .rail fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 6px; }
+  .rail legend { font-weight: 600; margin-bottom: 4px; padding: 0; }
+  .rail label { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+  .rail label .n { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .rail input[type="search"], .rail select, .rail input[type="date"] { width: 100%; padding: 7px 9px; border: 1px solid var(--rule); border-radius: 6px; background: var(--paper-2); }
+  .rail .hint { color: var(--muted); font-size: 12.5px; margin: 2px 0 0; }
+  .rail .actions { display: grid; gap: 6px; }
+  .rail .actions button, .rail .actions a { display: block; width: 100%; text-align: left; padding: 7px 9px; border: 1px solid var(--rule); border-radius: 6px; background: var(--paper-2); cursor: pointer; text-decoration: none; color: var(--ink); }
+  .rail .actions button:hover, .rail .actions a:hover { border-color: var(--blue); }
+  .rail .actions .status { min-height: 1.2em; color: var(--ok); font-size: 12.5px; }
+
+  .results-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0 0 10px; flex-wrap: wrap; }
+  .results-head h2 { font-size: 15px; font-weight: 600; margin: 0; }
+  .results-head .sort { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 13.5px; }
+  .results-head select { padding: 4px 6px; border: 1px solid var(--rule); border-radius: 5px; background: var(--paper-2); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  thead th { text-align: left; font-weight: 600; color: var(--ink-2); padding: 6px 8px; border-bottom: 1px solid var(--rule); position: sticky; top: 0; background: var(--paper); z-index: 1; white-space: nowrap; }
+  thead th.v, td.v { text-align: right; font-variant-numeric: tabular-nums; }
+  tbody tr.row td { padding: 8px 8px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  tbody tr.row:hover td { background: var(--paper-2); }
+  td.name button { all: unset; cursor: pointer; display: block; }
+  td.name button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 3px; }
+  td.name .nm { font-weight: 500; }
+  td.name .id { color: var(--muted); display: block; margin-top: 1px; }
+  td.date { white-space: nowrap; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  td.v { white-space: nowrap; color: var(--ink-2); }
+  td.v .lo { color: var(--muted); }
+  .chip { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12.5px; font-weight: 600; background: var(--seg-soft); color: var(--seg); white-space: nowrap; }
+  .tier { display: inline-block; font-size: 12px; color: var(--muted); margin-left: 6px; }
+  tr.detail td { padding: 0 8px 14px 8px; border-bottom: 1px solid var(--rule); background: var(--paper-2); }
+  tr.detail .box { padding: 12px 14px 4px; display: grid; gap: 8px; max-width: 78ch; }
+  tr.detail .note { padding-left: 10px; border-left: 3px solid var(--seg); }
+  tr.detail .links { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13.5px; }
+  tr.detail .meta { color: var(--muted); font-size: 13px; }
+  .empty { padding: 40px 0; color: var(--muted); }
+  .empty button { border: 0; background: none; color: var(--blue); cursor: pointer; padding: 0; font: inherit; text-decoration: underline; }
+
+  @media (max-width: 640px) {
+    thead th.v, td.v { display: none; }
+    .hide-sm { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+  @media print { .rail, .results-head .sort { display: none; } .layout { grid-template-columns: 1fr; } tr.detail { display: table-row !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>Web features for a self-contained HTML file</h1>
+  <p class="lede">Every feature in the <a href="https://github.com/web-platform-dx/web-features" target="_blank" rel="noopener">web-features</a> dataset, sorted by whether it works in <strong>one HTML file with inline CSS and JS, loaded from <code>file://</code> or any web host, with no network</strong>, in current Chrome, Firefox and Safari. Baseline status and browser versions come from the dataset; the offline verdicts are hand-curated and should be read as claims to test, not facts.</p>
+  <p class="data-status" id="dstatus" role="status" aria-live="polite">Loading the web-features dataset…</p>
+  <div class="ledger" id="ledger" hidden>
+    <div class="bar" id="bar" role="group" aria-label="Widely available features by verdict"></div>
+    <div class="legend" id="legend"></div>
+  </div>
+  <div class="data-actions" id="dactions" hidden>
+    <button type="button" id="refresh">Check for newer data</button>
+    <button type="button" id="clearcache">Clear local copy</button>
+    <button type="button" id="reload" hidden></button>
+  </div>
+  <details class="method">
+    <summary>How the verdicts were made</summary>
+    <p>Start from Baseline "widely available" (supported in every core browser for 30+ months). Then subtract anything that needs a network or server, a real (non-opaque) origin, an HTTP header, or a permission prompt — none of which a file opened from disk can provide. What's left is <b>Always available</b>. <b>Available with caveats</b> means it works everywhere but with a <code>file://</code>-specific constraint (for example, workers must be created from a <code>blob:</code> URL because Chromium gives every local file its own opaque origin). Each verdict shows whether it came from a per-feature override or a group rule; open a row to read the reason.</p>
+    <p>The dataset is fetched from jsDelivr (pinned to web-features v3.x, so the schema cannot change underneath this page) with unpkg as a fallback, then reduced to the fields shown here and kept in <code>localStorage</code>. After the first successful load the page works offline; on later visits it renders the local copy immediately and checks for a newer release in the background. Append <code>src=https://…/</code> to the URL hash to point it at a different mirror.</p>
+    <p>Two known limitations: the dataset does not model <code>file://</code>, so a verdict of "Always available" for a feature with no override is a default, not a checked claim; and "Newly available" features are shown with the same verdicts so you can see what will join the list once they pass 30 months. Use the date floor to match an older browser cohort.</p>
+  </details>
+</header>
+
+<div class="loading" id="loading">
+  <div class="spinner" aria-hidden="true"></div>
+  <p id="loadmsg">Fetching about 5 MB from cdn.jsdelivr.net…</p>
+</div>
+<div class="layout" id="layout" hidden>
+  <aside class="rail" aria-label="Filters">
+    <fieldset>
+      <legend>Search</legend>
+      <input type="search" id="q" placeholder="Name, id, or description" autocomplete="off">
+    </fieldset>
+    <fieldset id="tiers">
+      <legend>Baseline status</legend>
+    </fieldset>
+    <fieldset id="buckets">
+      <legend>Offline verdict</legend>
+    </fieldset>
+    <fieldset>
+      <legend>Widely available by</legend>
+      <input type="date" id="floor">
+      <p class="hint">Keeps features whose Baseline widely-available date is on or before this day. Clear to include everything.</p>
+    </fieldset>
+    <fieldset>
+      <legend>Group</legend>
+      <select id="group"><option value="">All groups</option></select>
+    </fieldset>
+    <fieldset>
+      <legend>Export current view</legend>
+      <div class="actions">
+        <a id="dl-csv" href="#" download="web-features-offline.csv">Download CSV</a>
+        <a id="dl-json" href="#" download="web-features-offline.json">Download JSON</a>
+        <button id="copy-md" type="button">Copy as Markdown table</button>
+        <button id="reset" type="button">Reset filters</button>
+        <div class="status" id="status" role="status" aria-live="polite"></div>
+      </div>
+    </fieldset>
+  </aside>
+
+  <main>
+    <div class="results-head">
+      <h2 id="count"></h2>
+      <div class="sort"><label for="sort">Sort</label>
+        <select id="sort">
+          <option value="name">Name</option>
+          <option value="hi">Widely available date, oldest first</option>
+          <option value="hi-desc">Widely available date, newest first</option>
+          <option value="k">Verdict</option>
+        </select></div>
+    </div>
+    <table>
+      <thead><tr>
+        <th>Feature</th><th>Verdict</th><th class="hide-sm">Widely available</th>
+        <th class="v">Chrome</th><th class="v">Firefox</th><th class="v">Safari</th><th class="v">iOS</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div class="empty" id="empty" hidden>No features match. <button type="button" id="reset2">Reset filters</button></div>
+  </main>
+</div>
+</div>
+
+<script>
+function boot(DATA) {
+  const F = DATA.features, M = DATA.meta;
+  const TIERS = { high: "Widely available", low: "Newly available", limited: "Limited availability" };
+  const BUCKET_ORDER = ["ok", "caveat", "origin", "network", "permission", "n_a"];
+  const $ = (s) => document.querySelector(s);
+
+
+  // ---------- state (mirrored in location.hash so it survives reload and can be shared) ----------
+  const DEFAULT = { q: "", tiers: ["high"], buckets: ["ok"], floor: "", group: "", sort: "name", open: [] };
+  let state = readHash();
+
+  function readHash() {
+    const s = structuredClone(DEFAULT);
+    try {
+      const p = new URLSearchParams(location.hash.slice(1));
+      if (!p.toString()) return s;
+      s.q = p.get("q") || "";
+      if (p.has("t")) s.tiers = p.get("t").split(",").filter(Boolean);
+      if (p.has("k")) s.buckets = p.get("k").split(",").filter(Boolean);
+      s.floor = p.get("d") || ""; s.group = p.get("g") || ""; s.sort = p.get("s") || "name";
+      s.open = p.has("o") ? p.get("o").split(",").filter(Boolean) : [];
+    } catch (e) {}
+    return s;
+  }
+  function writeHash() {
+    const p = new URLSearchParams();
+    if (srcOverride) p.set("src", srcOverride);
+    if (state.q) p.set("q", state.q);
+    p.set("t", state.tiers.join(",")); p.set("k", state.buckets.join(","));
+    if (state.floor) p.set("d", state.floor); if (state.group) p.set("g", state.group);
+    if (state.sort !== "name") p.set("s", state.sort);
+    if (state.open.length) p.set("o", state.open.join(","));
+    const h = "#" + p.toString();
+    if (location.hash !== h) { try { location.hash = h; } catch (e) {} }
+  }
+
+  // ---------- filter controls ----------
+  const tiersEl = $("#tiers"), bucketsEl = $("#buckets");
+  const countBy = (fn) => { const c = {}; for (const f of F) { const k = fn(f); c[k] = (c[k] || 0) + 1; } return c; };
+  const tierCounts = countBy((f) => f.b);
+  const bucketCounts = countBy((f) => (f.b === "high" ? f.k : "_"));
+  for (const t of ["high", "low", "limited"]) tiersEl.append(check("t", t, TIERS[t], tierCounts[t] || 0));
+  for (const k of BUCKET_ORDER) bucketsEl.append(check("k", k, M.buckets[k], bucketCounts[k] || 0, k));
+  function check(kind, val, label, n, seg) {
+    const l = document.createElement("label");
+    const i = document.createElement("input"); i.type = "checkbox"; i.value = val; i.dataset.kind = kind;
+    l.append(i);
+    if (seg) { const sw = document.createElement("span"); sw.className = "swatch"; sw.style.setProperty("--seg", `var(--${seg})`); l.append(sw); }
+    l.append(document.createTextNode(label));
+    const c = document.createElement("span"); c.className = "n"; c.textContent = n; l.append(c);
+    i.addEventListener("change", () => { const arr = kind === "t" ? state.tiers : state.buckets; const idx = arr.indexOf(val); if (i.checked && idx < 0) arr.push(val); if (!i.checked && idx >= 0) arr.splice(idx, 1); update(); });
+    return l;
+  }
+  const groupSel = $("#group");
+  {
+    const used = new Set(); for (const f of F) for (const g of f.g) used.add(g);
+    [...used].sort((a, b) => (M.groups[a] || a).localeCompare(M.groups[b] || b)).forEach((g) => { const o = document.createElement("option"); o.value = g; o.textContent = M.groups[g] || g; groupSel.append(o); });
+  }
+  $("#q").addEventListener("input", (e) => { state.q = e.target.value; update(); });
+  $("#floor").addEventListener("change", (e) => { state.floor = e.target.value; update(); });
+  groupSel.addEventListener("change", (e) => { state.group = e.target.value; update(); });
+  $("#sort").addEventListener("change", (e) => { state.sort = e.target.value; update(); });
+  $("#reset").addEventListener("click", reset); $("#reset2").addEventListener("click", reset);
+  function reset() { state = structuredClone(DEFAULT); update(); }
+  window.addEventListener("hashchange", () => { state = readHash(); update(false); });
+
+  // ---------- header bar (widely-available split by verdict) ----------
+  const bar = $("#bar"), legend = $("#legend");
+  const hiTotal = tierCounts.high || 0;
+  for (const k of BUCKET_ORDER) {
+    const n = bucketCounts[k] || 0; if (!n) continue;
+    const b = document.createElement("button"); b.type = "button"; b.style.setProperty("--seg", `var(--${k})`); b.style.flex = `${n} 1 0`;
+    b.dataset.k = k; b.title = `${M.buckets[k]}: ${n} of ${hiTotal} widely available features`;
+    if (n / hiTotal < 0.05) b.classList.add("tiny");
+    b.innerHTML = `<span>${n}</span>`; b.setAttribute("aria-label", b.title);
+    b.addEventListener("click", () => { state.tiers = ["high"]; state.buckets = [k]; update(); });
+    bar.append(b);
+    const l = document.createElement("button"); l.type = "button"; l.dataset.k = k;
+    l.innerHTML = `<span class="swatch" style="--seg:var(--${k})"></span><b>${n}</b> ${M.buckets[k]}`;
+    l.addEventListener("click", () => { state.tiers = ["high"]; state.buckets = [k]; update(); });
+    legend.append(l);
+  }
+
+  // ---------- filtering & rendering ----------
+  const rowsEl = $("#rows"), emptyEl = $("#empty"), countEl = $("#count");
+  let current = [];
+  function filtered() {
+    const q = state.q.trim().toLowerCase();
+    return F.filter((f) => {
+      if (!state.tiers.includes(f.b)) return false;
+      if (!state.buckets.includes(f.k)) return false;
+      if (state.group && !f.g.includes(state.group)) return false;
+      if (state.floor && (!f.hi || f.hi > state.floor)) return false;
+      if (q && !(f.n.toLowerCase().includes(q) || f.id.includes(q) || f.d.toLowerCase().includes(q))) return false;
+      return true;
+    });
+  }
+  const sorters = {
+    name: (a, b) => a.n.localeCompare(b.n, "en", { sensitivity: "base" }),
+    hi: (a, b) => (a.hi || "9999").localeCompare(b.hi || "9999") || sorters.name(a, b),
+    "hi-desc": (a, b) => (b.hi || "0000").localeCompare(a.hi || "0000") || sorters.name(a, b),
+    k: (a, b) => BUCKET_ORDER.indexOf(a.k) - BUCKET_ORDER.indexOf(b.k) || sorters.name(a, b),
+  };
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const ver = (v) => (v ? esc(v) : '<span class="lo">–</span>');
+
+  function update(pushHash = true) {
+    // sync controls
+    $("#q").value = state.q; $("#floor").value = state.floor; groupSel.value = state.group; $("#sort").value = state.sort;
+    for (const i of document.querySelectorAll('#tiers input')) i.checked = state.tiers.includes(i.value);
+    for (const i of document.querySelectorAll('#buckets input')) i.checked = state.buckets.includes(i.value);
+    for (const b of bar.children) b.setAttribute("aria-pressed", String(state.tiers.includes("high") && state.buckets.includes(b.dataset.k)));
+    for (const l of legend.children) l.setAttribute("aria-pressed", String(state.buckets.includes(l.dataset.k)));
+
+    current = filtered().sort(sorters[state.sort] || sorters.name);
+    countEl.textContent = `${current.length} of ${F.length} features`;
+    emptyEl.hidden = current.length > 0;
+
+    const frag = document.createDocumentFragment();
+    for (const f of current) {
+      const tr = document.createElement("tr"); tr.className = "row"; tr.dataset.id = f.id;
+      const isOpen = state.open.includes(f.id);
+      tr.innerHTML = `
+        <td class="name"><button type="button" aria-expanded="${isOpen}" aria-controls="d-${esc(f.id)}"><span class="nm">${esc(f.n)}</span><span class="id mono">${esc(f.id)}</span></button></td>
+        <td><span class="chip" style="--seg:var(--${f.k});--seg-soft:var(--${f.k}-soft)">${esc(M.buckets[f.k])}</span>${f.b !== "high" ? `<span class="tier">${esc(TIERS[f.b])}</span>` : ""}</td>
+        <td class="date hide-sm">${f.hi ? esc(f.hi) : f.lo ? `<span class="lo">since ${esc(f.lo)}</span>` : '<span class="lo">–</span>'}</td>
+        <td class="v mono">${ver(f.v.ch)}</td><td class="v mono">${ver(f.v.ff)}</td><td class="v mono">${ver(f.v.sa)}</td><td class="v mono">${ver(f.v.ios)}</td>`;
+      frag.append(tr);
+      const dt = document.createElement("tr"); dt.className = "detail"; dt.id = `d-${f.id}`; dt.hidden = !isOpen;
+      dt.innerHTML = `<td colspan="7"><div class="box">
+        <div>${esc(f.d)}</div>
+        ${f.note ? `<div class="note" style="--seg:var(--${f.k})">${esc(f.note)}</div>` : `<div class="note" style="--seg:var(--${f.k})"><em>No specific note. Verdict is ${f.src === "override" ? "a per-feature override" : f.src.startsWith("group") ? "inherited from the " + esc(M.groups[f.src.slice(6)] || f.src.slice(6)) + " group rule" : "the default for a feature no rule matched"}.</em></div>`}
+        <div class="links">
+          ${f.s ? `<a href="${esc(f.s)}" target="_blank" rel="noopener">Specification</a>` : ""}
+          ${f.c ? `<a href="https://caniuse.com/${esc(f.c)}" target="_blank" rel="noopener">caniuse</a>` : ""}
+          <a href="https://web-platform-dx.github.io/web-features-explorer/features/${esc(f.id)}/" target="_blank" rel="noopener">web-features explorer</a>
+        </div>
+        <div class="meta">${f.g.length ? "Groups: " + f.g.map((g) => esc(M.groups[g] || g)).join(", ") + ". " : ""}${f.lo ? "Newly available " + esc(f.lo) + ". " : ""}${f.hi ? "Widely available " + esc(f.hi) + ". " : ""}Verdict source: ${esc(f.src)}.</div>
+      </div></td>`;
+      frag.append(dt);
+    }
+    rowsEl.replaceChildren(frag);
+    refreshExports();
+    if (pushHash) writeHash();
+  }
+  rowsEl.addEventListener("click", (e) => {
+    const btn = e.target.closest("td.name button"); if (!btn) return;
+    const tr = btn.closest("tr"), id = tr.dataset.id, dt = tr.nextElementSibling;
+    const open = dt.hidden; dt.hidden = !open; btn.setAttribute("aria-expanded", String(open));
+    const i = state.open.indexOf(id); if (open && i < 0) state.open.push(id); if (!open && i >= 0) state.open.splice(i, 1);
+    writeHash();
+  });
+
+  // ---------- export (the only cross-browser write path: <a download> with a blob: URL) ----------
+  const csvA = $("#dl-csv"), jsonA = $("#dl-json"), status = $("#status");
+  let urls = [];
+  const cols = ["id", "name", "baseline", "widely_available", "newly_available", "verdict", "note", "chrome", "firefox", "safari", "safari_ios", "groups", "spec"];
+  const rowOf = (f) => [f.id, f.n, f.b, f.hi, f.lo, f.k, f.note, f.v.ch, f.v.ff, f.v.sa, f.v.ios, f.g.join("|"), f.s];
+  function refreshExports() {
+    for (const u of urls) URL.revokeObjectURL(u); urls = [];
+    const csv = [cols.join(","), ...current.map((f) => rowOf(f).map((c) => '"' + String(c).replace(/"/g, '""') + '"').join(","))].join("\r\n");
+    const json = JSON.stringify({ meta: { webFeaturesVersion: M.webFeaturesVersion, generated: M.generated, filters: state }, features: current.map((f) => Object.fromEntries(cols.map((c, i) => [c, rowOf(f)[i]]))) }, null, 1);
+    const csvUrl = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    const jsonUrl = URL.createObjectURL(new Blob([json], { type: "application/json" }));
+    urls.push(csvUrl, jsonUrl); csvA.href = csvUrl; jsonA.href = jsonUrl;
+  }
+  $("#copy-md").addEventListener("click", async () => {
+    const md = ["| Feature | id | Verdict | Widely available | Chrome | Firefox | Safari |", "|---|---|---|---|---|---|---|",
+      ...current.map((f) => `| ${f.n.replace(/\|/g, "\\|")} | \`${f.id}\` | ${M.buckets[f.k]} | ${f.hi || "–"} | ${f.v.ch || "–"} | ${f.v.ff || "–"} | ${f.v.sa || "–"} |`)].join("\n");
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(md);
+      else { const ta = document.createElement("textarea"); ta.value = md; document.body.append(ta); ta.select(); document.execCommand("copy"); ta.remove(); }
+      status.textContent = `Copied ${current.length} rows.`;
+    } catch (e) { status.textContent = "Copy failed — your browser refused clipboard access."; }
+    setTimeout(() => (status.textContent = ""), 3000);
+  });
+
+  update(false); writeHash();
+}
+
+/* ======================= data: fetch, reduce, classify, cache ======================= */
+const BUCKETS = {
+  ok: "Always available",
+  caveat: "Available with caveats",
+  origin: "Origin or storage dependent",
+  network: "Needs network, server or headers",
+  permission: "Needs permission or hardware",
+  n_a: "Not applicable to a page",
+};
+
+// Hand-curated offline verdicts. Group rules apply first; per-feature OVERRIDES win.
+// These are the report author's claims about file:// behavior, not part of web-features.
+const GROUP_RULES = {
+  fetch: ["network", "Only data: and blob: URLs can be fetched from file://; everything else needs a server."],
+  http: ["network", "HTTP protocol feature; nothing to negotiate when loaded from disk."],
+  webrtc: ["network", "Needs a signaling channel and usually a STUN/TURN server."],
+  "resource-hints": ["network", "Hints for network fetches; no-ops in a self-contained file."],
+  integrity: ["network", "Applies to subresources fetched over the network."],
+  reporting: ["network", "Reports are POSTed to a server endpoint."],
+  "credential-management": ["origin", "Credentials are scoped to a real origin; file:// has none."],
+  webauthn: ["origin", "Relying-party ID must be a registrable domain; unavailable on file://."],
+  "progressive-web-app": ["origin", "Requires a service worker and an https origin."],
+  payments: ["network", "Needs a payment handler and a real origin."],
+  cookies: ["origin", "Cookie behavior on file:// is undefined and differs per browser."],
+  indexeddb: ["origin", "Works on file:// in Chromium and Safari; Firefox has historically refused it on file://. Verify."],
+  geolocation: ["permission", "Permission prompt; some browsers block it on file://."],
+  sensors: ["permission", "Requires device hardware; iOS requires an explicit permission prompt."],
+  webdriver: ["n_a", "Automation protocol, not a page capability."],
+};
+
+const OVERRIDES = {
+  // --- storage / origin ---
+  localstorage: ["caveat", "Works on file:// in all three engines, but Chromium shares ONE bucket across every file:// page and Firefox scopes per directory. Namespace keys; treat as a cache."],
+  "storage-manager": ["origin", "navigator.storage.estimate()/persist() are origin-scoped; behavior on an opaque file:// origin is unreliable."],
+  "storage-access": ["origin", "Only meaningful for third-party cookies inside a real origin."],
+  "origin-private-file-system": ["origin", "OPFS is origin-scoped; expect SecurityError on Chromium file:// (opaque origin). Verify."],
+  "broadcast-channel": ["origin", "Channels are origin-scoped; on Chromium file:// each page is its own opaque origin, so cross-tab delivery is not guaranteed."],
+  "shared-workers": ["origin", "Shared across an origin; blocked or per-page on file://."],
+  "service-workers": ["origin", "Registration is refused on file:// in every engine."],
+  "js-modules-service-workers": ["origin", "Depends on service workers, which are refused on file://."],
+  "js-modules-shared-workers": ["origin", "Depends on shared workers."],
+  "notifications-apps": ["origin", "Requires a service worker / installed app."],
+  push: ["network", "Requires a push service and a service worker."],
+  history: ["caveat", "pushState()/replaceState() throw or misbehave on file:// in some engines. Use location.hash for routing; back/forward and hashchange are fine."],
+  navigation: ["caveat", "Navigation API is Baseline low; same file:// URL-mutation caveats as History."],
+  "cookie-enabled": ["origin", "Reports cookie availability, which is undefined on file://."],
+  "web-locks": ["caveat", "Locks are origin-scoped. Works within one page; cross-tab coordination on Chromium file:// is not guaranteed. Verify."],
+  "scroll-to-text-fragment": ["caveat", "Driven by the URL fragment directive; works when the user opens the file with #:~:text=…, but you cannot set it from script."],
+
+  // --- loading / modules / workers on an opaque origin ---
+  "js-modules": ["caveat", "Inline <script type=module> works everywhere. External <script type=module src=…> fails on Chromium file:// (CORS on opaque origin). Keep modules inline or import blob:/data: URLs."],
+  "import-maps": ["caveat", "Inline import maps work; map specifiers to data: or blob: URLs, not to sibling files."],
+  modulepreload: ["network", "Preloads a network fetch; meaningless when the module is inline."],
+  "top-level-await": ["ok", "Works in inline module scripts."],
+  "json-modules": ["caveat", "import … with {type:'json'} needs a URL; use a data: URL or inline <script type=application/json> instead."],
+  "dedicated-workers": ["caveat", "new Worker('file.js') fails on Chromium file://. Create the worker from a blob: URL of inline code."],
+  "js-modules-workers": ["caveat", "Works when the worker is created from a blob: URL with {type:'module'}."],
+  "request-animation-frame-workers": ["ok", "Available inside blob-URL workers."],
+  "audio-worklet": ["caveat", "addModule() needs a URL; pass a blob: URL of inline code."],
+  wasm: ["caveat", "Embed the module as base64 and call WebAssembly.instantiate(bytes). instantiateStreaming(fetch(…)) fails on file://."],
+  "wasm-threads": ["network", "Needs SharedArrayBuffer, which needs cross-origin isolation headers you cannot set from file://."],
+  "shared-memory": ["network", "SharedArrayBuffer requires COOP/COEP response headers; unavailable from file:// and from any host you don't control."],
+  "atomics-wait-async": ["network", "Depends on SharedArrayBuffer (see Shared memory)."],
+  "atomics-pause": ["network", "Depends on SharedArrayBuffer (see Shared memory)."],
+  "wasm-jspi": ["caveat", "Baseline low; same base64-instantiate caveat as WebAssembly."],
+  "wasm-garbage-collection": ["caveat", "Same base64-instantiate caveat as WebAssembly."],
+
+  // --- network-ish things without a network group ---
+  xhr: ["network", "Same restriction as fetch: only data:/blob: targets work from file://."],
+  websockets: ["network", "Needs a server."],
+  "server-sent-events": ["network", "Needs a server."],
+  beacons: ["network", "sendBeacon() posts to a server."],
+  webtransport: ["network", "Needs a server."],
+  brotli: ["network", "HTTP Content-Encoding. DecompressionStream only supports gzip/deflate, so brotli is not available to page script offline."],
+  zstd: ["network", "HTTP Content-Encoding only."],
+  "sourcemap-header": ["n_a", "Devtools convenience delivered as an HTTP header."],
+  "user-agent-sniffing": ["ok", "navigator.userAgent is readable, though frozen/reduced in modern browsers."],
+  cors: ["n_a", "A server-side header contract; a self-contained file makes no cross-origin requests."],
+  csp: ["caveat", "Only the <meta http-equiv> subset applies (no frame-ancestors, no report-uri). Delivery via header is impossible from file://."],
+  "trusted-types": ["caveat", "Enforced via CSP, so only the meta-tag subset applies."],
+  hsts: ["n_a", "HTTP header; irrelevant to a file loaded from disk."],
+  "http-authentication": ["n_a", "HTTP protocol feature."],
+  "mixed-content": ["n_a", "Concerns https pages loading http subresources; a self-contained file has none."],
+  "upgrade-insecure-requests": ["n_a", "No requests to upgrade."],
+  "referrer-policy": ["n_a", "Only affects outgoing requests and navigations."],
+  "subresource-integrity": ["network", "Applies to fetched subresources."],
+  "encrypted-media-extensions": ["network", "DRM license exchange requires a license server."],
+  "server-timing": ["network", "Populated from a response header."],
+  "resource-timing": ["n_a", "There are no subresource fetches to time in a self-contained file."],
+  "navigation-timing": ["ok", "Works on file://, though network phases are zero."],
+  "meta-refresh": ["caveat", "Works for reloading the same file; navigating to sibling files is fine from file://, but confirm the redirect target is a relative path."],
+  "credential-management": ["origin", "Needs a real origin."],
+  permissions: ["ok", "navigator.permissions.query() works; the individual permissions it reports on may still be unavailable on file://."],
+  "is-secure-context": ["ok", "file:// is a secure context in all three engines — a useful fact, since secure-context-gated APIs are therefore reachable."],
+  "user-activation": ["ok", "Transient activation works normally; several APIs below depend on it."],
+  "web-cryptography": ["ok", "Gated on secure context only, which file:// satisfies."],
+
+  // --- permission / hardware ---
+  "media-capture": ["permission", "getUserMedia() prompts for camera/microphone; some engines deny it on file:// outright."],
+  "mediastream-recording": ["caveat", "MediaRecorder works without a prompt on canvas.captureStream() streams; recording camera/mic depends on Media capture."],
+  "capture-stream-canvas": ["ok", "No permission needed; useful with MediaRecorder for video export."],
+  "device-orientation-events": ["permission", "Needs device sensors; iOS Safari requires requestPermission()."],
+  "screen-wake-lock": ["permission", "Requires visible page and may be denied on file://. Verify."],
+  "screen-orientation": ["caveat", "Reading orientation works everywhere; lock() requires fullscreen and is unsupported on iOS Safari."],
+  gamepad: ["ok", "No permission prompt; requires a controller to be connected and a user gesture before it appears."],
+  "speech-synthesis": ["caveat", "API is available everywhere, but installed voices come from the OS and may require an online voice download."],
+  "web-audio": ["ok", "AudioContext must be resumed inside a user gesture in every engine."],
+  "offline-audio-context": ["ok", ""],
+  "pdf-viewer": ["ok", "navigator.pdfViewerEnabled is read-only capability detection."],
+  "media-capabilities": ["ok", "Read-only capability detection."],
+
+  // --- clipboard ---
+  "clipboard-events": ["ok", "copy/cut/paste events with event.clipboardData are the most reliable clipboard path in every engine."],
+  "async-clipboard": ["caveat", "writeText()/write() work with a user gesture. readText()/read() work but Firefox and Safari show a paste-confirmation UI. Baseline low because Firefox read landed in 125/127."],
+  "clipboard-supports": ["caveat", "Baseline low; Firefox shipped late."],
+
+  // --- embedding / frames ---
+  iframe: ["caveat", "Frames render, but on Chromium file:// each frame is a separate opaque origin: use postMessage, not direct DOM access. Framing sibling local files works."],
+  "iframe-srcdoc": ["caveat", "Renders fine; treat the frame as cross-origin on Chromium file:// and communicate via postMessage."],
+  "iframe-sandbox": ["ok", ""],
+  embed: ["caveat", "Only useful for content the browser can render natively (PDF, images) supplied as a data: URL."],
+  object: ["caveat", "Same as <embed>: supply data: URLs; no plugins exist any more."],
+  "image-maps": ["ok", ""],
+
+  // --- resources that need inlining ---
+  "font-face": ["ok", "Fonts must be inlined as data: URLs (subset them; this is usually the largest payload)."],
+  "font-loading": ["ok", "document.fonts works against data:-URL @font-face rules."],
+  import: ["caveat", "CSS @import of sibling files works from file:// in practice, but it breaks the single-file contract. Inline the stylesheet."],
+  "loading-lazy": ["ok", "Applies to data: URL images too, though there is nothing to defer."],
+  srcset: ["ok", "Candidates can be data: URLs."],
+  "preloading-responsive-images": ["network", "Preload is a network hint."],
+  picture: ["ok", ""],
+  "data-urls": ["ok", "The backbone of a self-contained file: images, fonts, WASM and worker code all ride on data: (or blob:) URLs."],
+  download: ["ok", "The only cross-browser write path: <a download href=blobURL>. Always creates a new file; there is no in-place save."],
+  file: ["ok", "File/Blob/FileReader work on file://; get files via <input type=file> or drag-and-drop."],
+  "input-file": ["ok", ""],
+  "input-file-multiple": ["ok", ""],
+  "input-file-webkitdirectory": ["ok", "Baseline low but supported in all three engines; directory picking works from file://."],
+  "text-tracks": ["ok", "WebVTT tracks must be supplied as data:/blob: URLs."],
+  webvtt: ["ok", "Supply the .vtt as a data:/blob: URL."],
+  "webvtt-cue-settings": ["ok", ""],
+  video: ["ok", "Sources as data:/blob: URLs; large media makes the HTML file large."],
+  audio: ["ok", "Sources as data:/blob: URLs."],
+  source: ["ok", ""],
+  "media-playback-quality": ["ok", ""],
+  "preserves-pitch": ["ok", ""],
+  "request-video-frame-callback": ["ok", ""],
+  location: ["caveat", "Readable everywhere. Assigning location.hash is safe; assigning other components navigates to another file."],
+  hashchange: ["ok", "The recommended routing primitive for single-file apps."],
+  url: ["ok", ""],
+  a: ["ok", "Relative links to sibling local files resolve from file://; mailto: and target=_blank work."],
+  base: ["caveat", "Changes how relative URLs resolve; usually unwanted in a self-contained file."],
+  link: ["caveat", "Only <link rel=icon href=data:…> and <link rel=stylesheet> pointing at data: URLs make sense; anything else fetches."],
+  "link-rel-preload": ["network", ""],
+  "link-rel-preconnect": ["network", ""],
+  "link-rel-dns-prefetch": ["network", ""],
+  script: ["caveat", "Inline scripts only; external src fails the single-file contract and, for modules, fails outright on Chromium file://."],
+  online: ["ok", "navigator.onLine is readable; remember it reports the OS network state, not reachability."],
+  print: ["ok", "window.print() plus @media print is a dependable cross-browser PDF export path."],
+  "print-events": ["ok", ""],
+  "page-setup": ["ok", "@page works in print."],
+  "print-color-adjust": ["ok", ""],
+  "console": ["ok", ""],
+  "check-visibility": ["ok", ""],
+  xpath: ["ok", ""],
+  domparser: ["ok", ""],
+  "xml-serializer": ["ok", ""],
+  "parse-html-unsafe": ["ok", ""],
+  webgpu: ["caveat", "Not yet Baseline; do not assume."],
+  "fetch-priority": ["network", ""],
+  "abortable-fetch": ["network", "AbortController itself (see AbortController and AbortSignal) is fine; this entry is about aborting network fetches."],
+  aborting: ["ok", ""],
+  "compression-streams": ["ok", "gzip/deflate only. Handy for embedding compressed assets and inflating at load."],
+  "text-encoding": ["ok", ""],
+  "base64encodedecode": ["ok", ""],
+  "uint8array-base64-hex": ["ok", "Baseline low: verify your floor before relying on it; atob/btoa are the fallback."],
+  "structured-clone": ["ok", ""],
+  "transferable-arraybuffer": ["ok", ""],
+  postmessage: ["ok", "Works between windows/frames/workers, including across the opaque origins Chromium assigns on file:// — use targetOrigin '*'."],
+  "channel-messaging": ["ok", ""],
+  messageerror: ["ok", ""],
+  "page-visibility": ["ok", ""],
+  "page-transition-events": ["ok", ""],
+  "hardware-concurrency": ["ok", ""],
+  "visual-viewport": ["ok", ""],
+  screen: ["ok", ""],
+  matchmedia: ["ok", ""],
+  navigator: ["ok", ""],
+  window: ["ok", ""],
+  barprop: ["ok", ""],
+  language: ["ok", ""],
+  "selection-api": ["ok", "Selection and Range are fully available; see Composed ranges for shadow-DOM selections."],
+  "composed-ranges": ["caveat", "Baseline low; getComposedRanges() shipped last in Chromium — check your floor."],
+  highlight: ["caveat", "Custom Highlight API is Baseline low; Firefox shipped it last. Check your floor."],
+  "document-caretpositionfrompoint": ["caveat", "Baseline low; Safari shipped late."],
+  draganddrop: ["ok", "HTML drag-and-drop works on file://, including dropping OS files onto the page."],
+  "pointer-events-api": ["ok", ""],
+  "mouse-events": ["ok", ""],
+  "keyboard-events": ["ok", ""],
+  "composition-events": ["ok", ""],
+  "input-event": ["ok", ""],
+  "change-event": ["ok", ""],
+  "focus-events": ["ok", ""],
+  contenteditable: ["ok", ""],
+  "contenteditable-plaintextonly": ["caveat", "Baseline low; Firefox shipped it last."],
+  spellcheck: ["ok", "Actual checking depends on OS dictionaries."],
+  autocorrect: ["caveat", "Baseline low; behavior is platform-dependent."],
+  "view-transitions": ["caveat", "Same-document view transitions are Baseline low (Firefox shipped last). Cross-document transitions are not Baseline."],
+  "active-view-transition": ["caveat", "Baseline low."],
+  "view-transition-class": ["caveat", "Baseline low."],
+  popover: ["ok", "Baseline low by date but supported in all three engines for over a year."],
+  "invoker-commands": ["caveat", "Baseline low."],
+  urlpattern: ["caveat", "Baseline low; Safari shipped last."],
+  "canvas-2d": ["ok", "toBlob()/toDataURL() work as long as you only draw data:/blob:/inline sources (no tainting)."],
+  webgl: ["ok", ""],
+  webgl2: ["ok", ""],
+  "offscreen-canvas": ["ok", ""],
+  createimagebitmap: ["ok", ""],
+  imagebitmaprenderingcontext: ["ok", ""],
+  "canvas-2d-willreadfrequently": ["ok", ""],
+  intl: ["ok", "Locale data ships with the browser; no network needed."],
+  "intl-segmenter": ["ok", "Baseline low by date (Firefox 125) but supported in all three engines."],
+  "intl-duration-format": ["caveat", "Baseline low; check your floor."],
+  "intl-locale-info": ["caveat", "Baseline low."],
+  mathml: ["ok", "MathML Core; Chromium since 109."],
+  "font-family-math": ["caveat", "Depends on an installed math font."],
+  "font-family-system": ["ok", ""],
+  "system-color": ["ok", ""],
+  "forced-colors": ["ok", ""],
+  "safe-area-inset": ["ok", ""],
+  "dynamic-range": ["ok", ""],
+  "color-gamut": ["ok", ""],
+  "smil-svg-animations": ["ok", ""],
+  "svg-filters": ["ok", ""],
+  svg: ["ok", "Inline <svg> is fully available; <img src=data:image/svg+xml,…> too."],
+  avif: ["ok", "Decoding works from data: URLs."],
+  webp: ["ok", ""],
+  png: ["ok", ""],
+  jpeg: ["ok", ""],
+  gif: ["ok", ""],
+  bmp: ["ok", ""],
+  "colrv0": ["ok", "Font must be inlined."],
+  "font-palette": ["ok", "Font must be inlined."],
+  "accesskey": ["ok", "Modifier key differs per platform."],
+  "get-computed-style": ["ok", ""],
+  "constructed-stylesheets": ["ok", ""],
+  "css-object-model": ["ok", ""],
+  "css-supports": ["ok", ""],
+  "css-escape": ["ok", ""],
+  "registered-custom-properties": ["ok", "Baseline low by date (Firefox 128) but in all three engines."],
+  "light-dark": ["ok", "Baseline low by date but in all three engines."],
+  "light-dark-image": ["caveat", "Baseline low."],
+  "text-wrap": ["caveat", "Baseline low; text-wrap: pretty is not in Firefox."],
+  "text-wrap-balance": ["ok", "Baseline low by date but in all three engines."],
+  "field-sizing": ["caveat", "Baseline low; Firefox shipped last."],
+  "scope": ["caveat", "Baseline low; Firefox shipped last."],
+  "starting-style": ["ok", "Baseline low by date but in all three engines."],
+  "content-visibility": ["ok", "Baseline low by date but in all three engines."],
+  "backdrop-filter": ["ok", "Baseline low by date (Firefox 103) but in all three engines."],
+  "scrollend": ["caveat", "Baseline low; Safari shipped last."],
+  "shape-function": ["caveat", "Baseline low."],
+  "sibling-count": ["caveat", "Baseline low."],
+  "progress-function": ["caveat", "Baseline low."],
+  "contrast-color": ["caveat", "Baseline low."],
+  "alpha": ["caveat", "Baseline low."],
+  "relative-color": ["ok", "Baseline low by date but in all three engines."],
+  "gradient-interpolation": ["ok", "Baseline low by date but in all three engines."],
+  "container-style-queries": ["caveat", "Baseline low; Firefox shipped last."],
+  "details-content": ["caveat", "Baseline low."],
+  "details-name": ["ok", "Baseline low by date but in all three engines."],
+  "open-pseudo": ["caveat", "Baseline low."],
+  "state": ["ok", "Baseline low by date but in all three engines."],
+  "requestclose": ["caveat", "Baseline low."],
+  "toggleevent-source": ["caveat", "Baseline low."],
+  "float16array": ["caveat", "Baseline low."],
+  "resizable-buffers": ["ok", "Baseline low by date but in all three engines."],
+  "iterator-methods": ["ok", "Baseline low by date but in all three engines."],
+  "iterator-concat": ["caveat", "Baseline low."],
+  "set-methods": ["ok", "Baseline low by date but in all three engines."],
+  "getorinsert": ["caveat", "Baseline low."],
+  "math-sum-precise": ["caveat", "Baseline low."],
+  "regexp-escape": ["ok", "Baseline low by date but in all three engines."],
+  "promise-try": ["ok", "Baseline low by date but in all three engines."],
+  "json-raw": ["caveat", "Baseline low."],
+  "abortsignal-any": ["ok", "Baseline low by date but in all three engines."],
+  "abortsignal-timeout": ["ok", ""],
+  "async-iterable-streams": ["ok", "Baseline low by date but in all three engines."],
+  "readable-byte-streams": ["ok", ""],
+  "event-timing": ["ok", ""],
+  "largest-contentful-paint": ["caveat", "Baseline low; Safari shipped last."],
+  "gethtml": ["ok", "Baseline low by date but in all three engines."],
+  "zoom": ["caveat", "Baseline low; Firefox shipped last."],
+  "webgl-color-management": ["caveat", "Baseline low."],
+  "webgl2-color-management": ["caveat", "Baseline low."],
+  "ext-texture-compression-rgtc": ["ok", ""],
+  "http3": ["network", ""],
+  "reporting-csp-violations": ["network", ""],
+  "webrtc-encoded-transform": ["network", ""],
+  "vertical-form-controls": ["caveat", "Baseline low."],
+  "paint-order": ["ok", ""],
+  "overflow-anchor": ["caveat", "Baseline low; Safari shipped last."],
+  "crisp-edges": ["ok", ""],
+  "alt-text-generated-content": ["ok", ""],
+  "target-text": ["caveat", "Depends on text fragments in the opening URL."],
+  "text-decoration-spelling-grammar": ["ok", ""],
+  "text-decoration-skip-ink-all": ["ok", ""],
+  "text-indent-each-line": ["caveat", "Baseline low."],
+  "text-indent-hanging": ["caveat", "Baseline low."],
+  "baseline-shift": ["ok", ""],
+  "ruby-align": ["ok", ""],
+  "ruby-position": ["ok", ""],
+  "white-space-collapse": ["ok", ""],
+  "transform-box": ["ok", ""],
+  "transition-behavior": ["ok", "Baseline low by date but in all three engines."],
+  "scrollbar-color": ["caveat", "Baseline low; not on iOS Safari."],
+  "scrollbar-gutter": ["caveat", "Baseline low; Safari shipped last."],
+  "scrollbar-width": ["caveat", "Baseline low."],
+  "abs-sign": ["ok", ""],
+  "round-mod-rem": ["ok", "Baseline low by date but in all three engines."],
+  "align-content-block": ["ok", ""],
+  "rcap": ["ok", ""], "rch": ["ok", ""], "rex": ["ok", ""], "ric": ["ok", ""],
+  "font-size-adjust": ["ok", ""],
+};
+
+function reduce(data, version) {
+  const out = [];
+  for (const [id, f] of Object.entries(data.features)) {
+    if (f.kind !== "feature") continue;
+    const st = f.status || {};
+    const groups = Array.isArray(f.group) ? f.group : f.group ? [f.group] : [];
+    let bucket = "ok", note = "", src = "default";
+    for (const g of groups) if (GROUP_RULES[g]) { [bucket, note] = GROUP_RULES[g]; src = "group:" + g; }
+    if (OVERRIDES[id]) { [bucket, note] = OVERRIDES[id]; src = "override"; }
+    const sup = st.support || {};
+    out.push({ id, n: f.name, d: f.description || "", g: groups, s: (f.spec && f.spec[0]) || "", c: (f.caniuse && f.caniuse[0]) || "",
+      b: st.baseline === "high" ? "high" : st.baseline === "low" ? "low" : "limited", lo: st.baseline_low_date || "", hi: st.baseline_high_date || "",
+      v: { ch: sup.chrome || "", ff: sup.firefox || "", sa: sup.safari || "", ios: sup.safari_ios || "" }, k: bucket, note, src });
+  }
+  out.sort((a, b) => a.n.localeCompare(b.n, "en", { sensitivity: "base" }));
+  const groups = {}; for (const [id, g] of Object.entries(data.groups || {})) groups[id] = g.name;
+  return { meta: { webFeaturesVersion: version, generated: new Date().toISOString().slice(0, 10), buckets: BUCKETS, groups }, features: out };
+}
+
+const CACHE_KEY = "web-features-offline-report:v1"; // namespaced: Chromium shares one localStorage across all file:// pages
+const MIRRORS = ["https://cdn.jsdelivr.net/npm/web-features@3/", "https://unpkg.com/web-features@3/"];
+const srcOverride = new URLSearchParams(location.hash.slice(1)).get("src");
+const mirrors = srcOverride ? [srcOverride.endsWith("/") ? srcOverride : srcOverride + "/"] : MIRRORS;
+
+function readCache() { try { const c = JSON.parse(localStorage.getItem(CACHE_KEY)); return c && c.features && c.meta ? c : null; } catch (e) { return null; } }
+function writeCache(payload) { try { localStorage.setItem(CACHE_KEY, JSON.stringify(payload)); return true; } catch (e) { return false; } } // QuotaExceeded / private mode
+
+async function fetchDataset() {
+  let lastErr;
+  for (const base of mirrors) {
+    try {
+      const [pkg, data] = await Promise.all([
+        fetch(base + "package.json", { cache: "no-cache" }).then((r) => { if (!r.ok) throw new Error(r.status + " " + r.statusText); return r.json(); }),
+        fetch(base + "data.json").then((r) => { if (!r.ok) throw new Error(r.status + " " + r.statusText); return r.json(); }),
+      ]);
+      if (!data.features || !data.groups) throw new Error("Unexpected data shape from " + base);
+      return { payload: reduce(data, pkg.version), base };
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr || new Error("No mirror configured");
+}
+
+const dstatus = document.getElementById("dstatus"), loadingEl = document.getElementById("loading"), loadmsg = document.getElementById("loadmsg");
+function show(payload, statusText) {
+  document.getElementById("layout").hidden = false; document.getElementById("ledger").hidden = false; document.getElementById("dactions").hidden = false;
+  loadingEl.hidden = true; dstatus.textContent = statusText; dstatus.classList.remove("err");
+  boot(payload);
+}
+function describe(p, suffix) { return `web-features v${p.meta.webFeaturesVersion}, ${p.features.length} features, fetched ${p.meta.generated}${suffix}`; }
+
+async function main() {
+  const cached = readCache();
+  let shown = false;
+  if (cached) { show(cached, describe(cached, " — local copy. Checking for newer data…")); shown = true; }
+  else loadmsg.textContent = `Fetching about 5 MB from ${new URL(mirrors[0]).host}…`;
+  try {
+    const { payload, base } = await fetchDataset();
+    const stored = writeCache(payload);
+    const storeNote = stored ? "" : " (could not store a local copy: storage quota or private mode)";
+    if (!shown) show(payload, describe(payload, " from " + new URL(base).host + storeNote));
+    else if (payload.meta.webFeaturesVersion !== cached.meta.webFeaturesVersion || payload.features.length !== cached.features.length) {
+      dstatus.textContent = describe(cached, ` — local copy. Newer data available (v${payload.meta.webFeaturesVersion}).`);
+      const r = document.getElementById("reload"); r.hidden = false; r.textContent = `Reload with v${payload.meta.webFeaturesVersion}`; r.onclick = () => location.reload();
+    } else dstatus.textContent = describe(cached, " — local copy, confirmed current" + storeNote + ".");
+  } catch (e) {
+    if (shown) { dstatus.textContent = describe(cached, " — local copy. Could not reach the CDN: " + e.message); dstatus.classList.add("err"); }
+    else {
+      loadingEl.classList.add("err");
+      loadmsg.innerHTML = `Could not load the dataset (${esc(e.message)}). This page needs one online visit to fetch web-features from a CDN; after that it works offline from a local copy. `;
+      const b = document.createElement("button"); b.type = "button"; b.textContent = "Try again"; b.onclick = () => location.reload(); loadingEl.append(b);
+      dstatus.textContent = "No data loaded."; dstatus.classList.add("err");
+    }
+  }
+}
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+document.getElementById("refresh").addEventListener("click", async () => {
+  dstatus.textContent = "Checking for newer data…"; dstatus.classList.remove("err");
+  try { const { payload } = await fetchDataset(); writeCache(payload); dstatus.textContent = describe(payload, " — fetched just now. Reloading…"); setTimeout(() => location.reload(), 600); }
+  catch (e) { dstatus.textContent = "Could not reach the CDN: " + e.message; dstatus.classList.add("err"); }
+});
+document.getElementById("clearcache").addEventListener("click", () => { try { localStorage.removeItem(CACHE_KEY); } catch (e) {} location.reload(); });
+main();
+</script>
+</body>
+</html>
