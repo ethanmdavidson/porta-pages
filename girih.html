@@ -8,11 +8,15 @@
   The panel is judged when nothing more will fit, and a flawless panel is
   painted with flowers.
 
-  Keyboard: arrows choose an edge, r turns the tile, enter sets it, s sets it
-  aside.
+  Keyboard: left and right arrows choose an edge, up and down arrows or r
+  turn the tile, enter or space sets it, s sets it aside.
 
   Progress is saved in localStorage, so closing the page and coming back
   offers to continue.
+
+  Open this file with #test at the end of the URL to run the built-in
+  self-test of the game logic and show the results on the page. The test
+  leaves the game and the saved game alone.
 -->
 <html lang="en">
 <head>
@@ -76,6 +80,9 @@
   .actions button:active:not(:disabled) { filter: brightness(1.15); }
   #hint { text-align: center; color: var(--ink-dim); font-size: 13px; font-style: italic; }
   @media (pointer: coarse) { #hint { display: none; } }
+  #test-report { position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 10; max-height: 40vh; overflow: auto; padding: 10px 14px; border: 1px solid; background: var(--panel); font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; -webkit-user-select: text; user-select: text; }
+  #test-report.pass { color: #8fd19e; }
+  #test-report.fail { color: #f08a7a; }
 
   @media (max-width: 640px), (orientation: portrait) {
     #app { gap: 6px; }
@@ -113,7 +120,6 @@
     border: 0; border-radius: 3px; font-size: 17px; cursor: pointer;
   }
   .sheet button:focus-visible, .actions button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
-  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
 <body>
@@ -142,7 +148,7 @@
       </div>
     </aside>
   </div>
-  <p id="hint">arrows choose an edge, r turns the tile, enter sets it, s sets it aside</p>
+  <p id="hint">← → choose an edge, ↑ ↓ or R turn the tile, Enter or Space sets it, S sets it aside</p>
 
   <div id="overlay" class="show">
     <div class="sheet">
@@ -151,6 +157,7 @@
         <p>The five tiles of Persian strapwork. Lines leave every edge at 54°, so wherever two tiles meet edge to edge the pattern runs on unbroken.</p>
         <div id="legend"></div>
         <p>The tiles are scaffolding: when a panel is judged they dissolve and only the strapwork remains. A flawless panel is painted with flowers. Fill the panel outward from the central star. Tap a lit edge to try the tile there, tap the same edge again to turn it, then press Set. The panel is judged when nothing more will fit.</p>
+        <p id="new-warn" class="verdict" role="status" hidden>A new game replaces your saved game. Press it again to confirm.</p>
         <button id="btn-continue" hidden>Continue</button>
         <button id="btn-start">Begin</button>
       </div>
@@ -250,9 +257,12 @@ var GIRIH = (function () {
   }
 
   const DEFS = {
-    // Deal weights follow the historical mix: hexagons and bowties do most of the work
-    // (Lu & Steinhardt find their ratio tends to the golden ratio in the Darb-i Imam pattern),
-    // decagons anchor the design, pentagons and rhombuses are occasional.
+    // Deal weights loosely follow the historical mix: hexagons and bowties do most of the
+    // work, decagons anchor the design, pentagons and rhombuses are occasional. The 5:3
+    // hexagon:bowtie weighting approximates the golden ratio (about 1.618): Lu & Steinhardt
+    // (Science 315, 2007, p. 1108) state that repeatedly applying the Darb-i Imam subdivision
+    // rule gives a hexagon-to-bowtie ratio that tends to it. The real spandrel is a finite
+    // pattern, only about two levels deep, so its own counts need not match.
     decagon:  { name: 'Decagon',           angles: [144, 144, 144, 144, 144, 144, 144, 144, 144, 144], weight: 2 },
     hexagon:  { name: 'Elongated hexagon', angles: [72, 144, 144, 72, 144, 144], weight: 5 },
     bowtie:   { name: 'Bowtie',            angles: [72, 72, 216, 72, 72, 216], weight: 3 },
@@ -269,7 +279,6 @@ var GIRIH = (function () {
       x += Math.cos(h); y += Math.sin(h);
       h += (180 - def.angles[(i + 1) % n]) * DEG;
     }
-    const closure = Math.hypot(x, y);
     const c = centroid(pts);
     pts = pts.map(p => sub(p, c));
     const partIdx = id === 'bowtie' ? [[2, 3, 4, 5], [5, 0, 1, 2]] : [pts.map((_, i) => i)];
@@ -285,9 +294,31 @@ var GIRIH = (function () {
         parts: parts.map(pp => pp.map(p => rot(p, r))),
         deco: deco.map(s => [rot(s.a, r), rot(s.b, r)]),
         dirs: dirs.map(d => (d + r) % 10),
+        bbox: bboxOf(verts),
       });
     }
-    return { id, name: def.name, weight: def.weight, n, angles: def.angles, area: polyArea(pts), R, rots, closure, decoAll: decorate(pts, id === 'decagon' ? 1 : 0) };
+    const tile = { id, name: def.name, weight: def.weight, n, angles: def.angles, area: polyArea(pts), R, rots };
+    tile.against = distinctEdges(tile);
+    return tile;
+  }
+  function bboxOf(verts) {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const v of verts) { x0 = Math.min(x0, v[0]); y0 = Math.min(y0, v[1]); x1 = Math.max(x1, v[0]); y1 = Math.max(y1, v[1]); }
+    return [x0, y0, x1, y1];
+  }
+  // Which of the tile's own edges give distinct placements against a free edge.
+  // Placing edge i against a free edge of direction d uses rotation d + 5 - dirs[i],
+  // so a different d only rotates every option by the same amount: the de-duplication
+  // for the tile's symmetry is the same for every edge and can be done once here.
+  // The first edge of each class is kept, so options keep their original order.
+  function distinctEdges(tile) {
+    const seen = new Set(), out = [];
+    for (let i = 0; i < tile.n; i++) {
+      const r = ((5 - tile.rots[0].dirs[i]) % 10 + 10) % 10, S = tile.rots[r], m = S.mids[i];
+      const k = vertsKey(S.verts.map(p => [p[0] - m[0], p[1] - m[1]]));
+      if (!seen.has(k)) { seen.add(k); out.push(i); }
+    }
+    return out;
   }
   const TILES = {};
   for (const id in DEFS) TILES[id] = buildTile(id, DEFS[id]);
@@ -300,9 +331,13 @@ var GIRIH = (function () {
       const b = verts[(i + 1) % verts.length], mid = mul(add(a, b), 0.5);
       return { a, b, mid, key: vkey(mid), dir: S.dirs[i], i };
     });
-    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    for (const v of verts) { x0 = Math.min(x0, v[0]); y0 = Math.min(y0, v[1]); x1 = Math.max(x1, v[0]); y1 = Math.max(y1, v[1]); }
-    return { tile, r, x, y, verts, edges, parts: S.parts.map(pp => pp.map(T)), deco: S.deco.map(s => [T(s[0]), T(s[1])]), bbox: [x0, y0, x1, y1], id: 0 };
+    return { tile, r, x, y, verts, edges, parts: S.parts.map(pp => pp.map(T)), deco: S.deco.map(s => [T(s[0]), T(s[1])]), bbox: bboxOf(verts), id: 0 };
+  }
+  // Just enough of a placement for the fit tests (bounding box and convex parts);
+  // place() builds the full object when a placement is previewed or set.
+  function lightPlace(tile, r, x, y) {
+    const S = tile.rots[r], b = S.bbox;
+    return { tile, r, x, y, parts: S.parts.map(pp => pp.map(p => [p[0] + x, p[1] + y])), bbox: [b[0] + x, b[1] + y, b[2] + x, b[3] + y] };
   }
   function vertsKey(verts) { return verts.map(vkey).sort().join('|'); }
 
@@ -345,45 +380,49 @@ var GIRIH = (function () {
   }
 
   // All ways the tile can sit against a free edge (edge-to-edge, 36° steps),
-  // de-duplicated for the tile's own symmetry.
+  // de-duplicated for the tile's own symmetry. Returns light placements.
   function placementsAgainst(tile, edge) {
-    const seen = new Set(), out = [];
-    for (let i = 0; i < tile.n; i++) {
+    return tile.against.map(i => {
       const r = ((edge.dir + 5 - tile.rots[0].dirs[i]) % 10 + 10) % 10;
       const m = tile.rots[r].mids[i];
-      const pl = place(tile, r, edge.mid[0] - m[0], edge.mid[1] - m[1]);
-      const k = vertsKey(pl.verts);
-      if (seen.has(k)) continue;
-      seen.add(k); out.push(pl);
-    }
-    return out;
+      return lightPlace(tile, r, edge.mid[0] - m[0], edge.mid[1] - m[1]);
+    });
   }
 
   class Board {
     constructor(W, H) {
       this.W = W; this.H = H; this.tiles = []; this.edgeMap = new Map(); this.vertMap = new Map(); this.nextId = 1; this.rosettes = 0;
+      this.covered = 0;
+      // Free edge key -> { edge, owner, fits: { tileId: [light placements] }, checked }.
+      // Tiles are only ever added, so a placement that stops fitting never fits again:
+      // each refresh only re-tests the placements that still fit against the tiles
+      // added since (tiles[checked..]), and an edge with none left costs nothing.
+      this.cache = new Map();
     }
     add(pl) {
       pl.id = this.nextId++;
       this.tiles.push(pl);
+      this.covered += areaInRect(pl, this.W, this.H);
       let shared = 0;
+      const touched = [];
       for (const e of pl.edges) {
         const arr = this.edgeMap.get(e.key) || [];
         arr.push({ t: pl, e });
         this.edgeMap.set(e.key, arr);
-        if (arr.length > 1) shared++;
+        if (arr.length > 1) { shared++; this.cache.delete(e.key); }
+        for (const { t } of arr) if (t.tile.id === 'decagon' && !t.rosette && !touched.includes(t)) touched.push(t);
       }
       const closed = [];
       pl.verts.forEach((v, i) => {
         const k = vkey(v);
-        const rec = this.vertMap.get(k) || { sum: 0, pos: v, closed: false };
+        const rec = this.vertMap.get(k) || { sum: 0, closed: false };
         rec.sum += pl.tile.angles[i];
         if (!rec.closed && Math.abs(rec.sum - 360) < 0.5) { rec.closed = true; closed.push(v); }
         this.vertMap.set(k, rec);
       });
+      // only decagons sharing an edge with the new tile (or the tile itself) can have just closed
       const rosettes = [];
-      for (const t of this.tiles) {
-        if (t.tile.id !== 'decagon' || t.rosette) continue;
+      for (const t of touched) {
         if (t.edges.every(e => this.edgeMap.get(e.key).length > 1)) { t.rosette = true; rosettes.push(t); }
       }
       this.rosettes += rosettes.length;
@@ -406,26 +445,36 @@ var GIRIH = (function () {
       for (const t of this.tiles) if (placementsOverlap(pl, t)) return false;
       return true;
     }
-    // Map of edge key -> { edge, owner, placements[] } for one tile type.
-    candidates(tile, free) {
-      const out = new Map();
-      for (const { t, e } of free || this.freeEdges()) {
-        const pls = placementsAgainst(tile, e).filter(pl => this.fits(pl));
-        if (pls.length) out.set(e.key, { edge: e, owner: t, placements: pls });
+    // Tile id -> Map of edge key -> { edge, owner, placements[] }, for the tile types
+    // that fit somewhere. Placements are light (see lightPlace); place() completes them.
+    // Same result as testing every placement against every tile with fits().
+    candidateSets() {
+      const n = this.tiles.length, out = new Map();
+      for (const { t, e } of this.freeEdges()) {
+        let c = this.cache.get(e.key);
+        if (!c) {
+          c = { edge: e, owner: t, fits: {}, checked: n };
+          for (const id of TILE_IDS) c.fits[id] = placementsAgainst(TILES[id], e).filter(pl => this.fits(pl));
+          this.cache.set(e.key, c);
+        } else if (c.checked < n) {
+          for (const id in c.fits) {
+            const pls = c.fits[id];
+            if (pls.length) c.fits[id] = pls.filter(pl => { for (let k = c.checked; k < n; k++) if (placementsOverlap(pl, this.tiles[k])) return false; return true; });
+          }
+          c.checked = n;
+        }
+        for (const id of TILE_IDS) {
+          const pls = c.fits[id];
+          if (!pls.length) continue;
+          if (!out.has(id)) out.set(id, new Map());
+          out.get(id).set(e.key, { edge: e, owner: t, placements: pls });
+        }
       }
-      return out;
+      // keep the historical deal order of tile types
+      return new Map(TILE_IDS.filter(id => out.has(id)).map(id => [id, out.get(id)]));
     }
-    anyPlacement() {
-      const free = this.freeEdges();
-      for (const id of TILE_IDS) if (this.candidates(TILES[id], free).size) return true;
-      return false;
-    }
-    // Exact: tiles never overlap, so clipped areas simply add up.
-    coverage() {
-      let a = 0;
-      for (const t of this.tiles) a += areaInRect(t, this.W, this.H);
-      return a / (this.W * this.H);
-    }
+    // Exact: tiles never overlap, so clipped areas simply add up (summed as tiles are added).
+    coverage() { return this.covered / (this.W * this.H); }
     // Which mirror/half-turn symmetries of the panel the placed tiles respect.
     symmetries() {
       const keys = new Set(this.tiles.map(t => vertsKey(t.verts)));
@@ -489,7 +538,10 @@ var GIRIH = (function () {
         prev = id;
       }
     }
-    for (const v of verts) v.nb.sort((x, y) => Math.atan2(verts[x].p[1] - v.p[1], verts[x].p[0] - v.p[0]) - Math.atan2(verts[y].p[1] - v.p[1], verts[y].p[0] - v.p[0]));
+    for (const v of verts) {
+      const ang = new Map(v.nb.map(x => [x, Math.atan2(verts[x].p[1] - v.p[1], verts[x].p[0] - v.p[0])]));
+      v.nb.sort((x, y) => ang.get(x) - ang.get(y));
+    }
     const visited = new Set(), out = [];
     for (let u = 0; u < verts.length; u++) for (const v0 of verts[u].nb) {
       if (visited.has(u + '>' + v0)) continue;
@@ -501,8 +553,7 @@ var GIRIH = (function () {
         const nb = verts[cv].nb, idx = nb.indexOf(cu), nx = nb[(idx - 1 + nb.length) % nb.length];
         cu = cv; cv = nx;
       }
-      const area = polyArea(poly);
-      if (area > 1e-4) out.push({ poly, area, sides: new Set(poly.map(vkey)).size });
+      if (polyArea(poly) > 1e-4) out.push({ poly });
     }
     return out;
   }
@@ -555,6 +606,51 @@ var ORNAMENT = (function () {
     let best = null, bd = -1;
     for (const p of poly) { const d = Math.hypot(p[0] - c[0], p[1] - c[1]); if (d > bd) { bd = d; best = p; } }
     return { d: bd, ang: Math.atan2(best[1] - c[1], best[0] - c[0]) };
+  }
+  function convex(poly) {
+    let sign = 0;
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i], b = poly[(i + 1) % poly.length], c = poly[(i + 2) % poly.length];
+      const cr = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]);
+      if (Math.abs(cr) < 1e-9) continue;
+      if (sign && Math.sign(cr) !== sign) return false;
+      sign = Math.sign(cr);
+    }
+    return true;
+  }
+  // Pole of inaccessibility (the polylabel algorithm): the interior point farthest from
+  // the boundary, found by subdividing grid cells that could still beat the best so far.
+  function pole(poly, precision) {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const p of poly) { x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0]); y1 = Math.max(y1, p[1]); }
+    const size = Math.min(x1 - x0, y1 - y0);
+    const cell = (x, y, h) => {
+      const d = (pointInPoly(poly, [x, y]) ? 1 : -1) * inradius(poly, [x, y]);
+      return { x, y, h, d, max: d + h * Math.SQRT2 };
+    };
+    const c = centroid(poly);
+    let best = cell(c[0], c[1], 0);
+    if (!(size > 0)) return [best.x, best.y];
+    const cells = [];
+    for (let x = x0; x < x1; x += size) for (let y = y0; y < y1; y += size) cells.push(cell(x + size / 2, y + size / 2, size / 2));
+    while (cells.length) {
+      let bi = 0;
+      for (let i = 1; i < cells.length; i++) if (cells[i].max > cells[bi].max) bi = i;
+      const cl = cells.splice(bi, 1)[0];
+      if (cl.d > best.d) best = cl;
+      if (cl.max - best.d <= precision) break; // no remaining cell can do better
+      const h = cl.h / 2;
+      cells.push(cell(cl.x - h, cl.y - h, h), cell(cl.x + h, cl.y - h, h), cell(cl.x - h, cl.y + h, h), cell(cl.x + h, cl.y + h, h));
+    }
+    return [best.x, best.y];
+  }
+  // Motif centre: the centroid, unless the region is concave (typically cut by the panel
+  // frame) and the centroid falls outside it or much nearer its edge than need be.
+  function centre(pts) {
+    const c = centroid(pts);
+    if (convex(pts)) return c;
+    const p = pole(pts, 0.005), inside = pointInPoly(pts, c);
+    return !inside || inradius(pts, p) > 1.25 * inradius(pts, c) ? p : c;
   }
   function distinct(poly) { // drop repeated vertices (spikes from dangling straps)
     const out = [];
@@ -678,7 +774,7 @@ var ORNAMENT = (function () {
     for (const f of faces) {
       const pts = distinct(f.poly);
       if (pts.length < 3) continue;
-      const cen = centroid(pts), rIn = inradius(pts, cen), far = farthest(pts, cen);
+      const cen = centre(pts), rIn = inradius(pts, cen), far = farthest(pts, cen);
       const n = pts.length, lw = Math.max(0.012, Math.min(0.03, rIn * 0.09));
       const dec = decs.find(t => pointInPoly(pts, [t.x, t.y]));
       const pen = pents.find(t => pointInPoly(pts, [t.x, t.y]));
@@ -712,7 +808,7 @@ var ORNAMENT = (function () {
       c.restore();
     }
   }
-  return { render, palette: P };
+  return { render, palette: P, centre };
 })();
 </script>
 <script>
@@ -723,23 +819,27 @@ var ORNAMENT = (function () {
   const COLORS = { decagon: '#22306b', hexagon: '#2a8f86', bowtie: '#3b63b5', pentagon: '#b4522c', rhombus: '#c99a3a' };
   const IVORY = '#efe3c4', STRAP_DARK = '#0b0913', GOLD = '#d6a748', PLAIN = '#223272';
   const PANELS = [[8, 11], [9, 12], [10, 13], [11, 14]];
-  const SKIPS = 3;
+  const SKIPS = 3, FADE_MS = 1400;
 
   const $ = s => document.querySelector(s);
   const canvas = $('#board'), ctx = canvas.getContext('2d');
   const layer = document.createElement('canvas'), lctx = layer.getContext('2d');
+  // plain and ornate are full-resolution bitmaps needed only once a panel is finished,
+  // so they are allocated then and freed on the next panel (mobile canvas memory is tight)
   const plain = document.createElement('canvas'), pctx = plain.getContext('2d');
   const ornate = document.createElement('canvas'), octx = ornate.getContext('2d');
   // cross-fades: scaffolding -> plain ground, and (only for a flawless panel) -> coloured infill
-  const plainF = { from: 0, to: 0, t0: 0 }, ornF = { from: 0, to: 0, t0: 0 };
-  let ornateReady = false;
+  const plainF = { from: 0, to: 0, t0: 0, dur: FADE_MS }, ornF = { from: 0, to: 0, t0: 0, dur: FADE_MS };
+  let ornateReady = false, ornateAt = null, ornateTimer = 0, faceCache = null;
   const SAVE_KEY = 'girih-save-2'; // bumped when tile geometry changes, so old boards cannot be rebuilt into overlaps
   const overlay = $('#overlay');
   const dpr = () => window.devicePixelRatio || 1;
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  const calm = () => reduceMotion.matches;
 
   let board, W = 8, H = 11, panelIdx = 0, score = 0, skips = SKIPS, queue = [];
   let cands = new Map(), candList = [], sel = null, phase = 'title';
-  let sc = 30, ox = 0, oy = 0, cssW = 0, cssH = 0;
+  let sc = 30, ox = 0, oy = 0, cssW = 40, cssH = 40, D = 1; // D: the pixel ratio the canvases were last sized for
   let flashes = [];
 
   // ---------- drawing primitives (world units, y up) ----------
@@ -764,62 +864,120 @@ var ORNAMENT = (function () {
     straps(c, all, STRAP_DARK, 0.13);
     straps(c, all, IVORY, 0.06);
   }
-  function setWorld(c) { const d = dpr(); c.setTransform(d * sc, 0, 0, -d * sc, d * ox, d * (oy + H * sc)); }
+  function setWorld(c) { c.setTransform(D * sc, 0, 0, -D * sc, D * ox, D * (oy + H * sc)); }
+  function renderTiles(cv, c, mono) {
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    c.clearRect(0, 0, cv.width, cv.height);
+    setWorld(c);
+    drawTiles(c, board.tiles, mono);
+  }
   function renderLayer() {
-    for (const [cv, c, mono] of [[layer, lctx, false], [plain, pctx, true]]) {
-      c.setTransform(1, 0, 0, 1, 0, 0);
-      c.clearRect(0, 0, cv.width, cv.height);
-      setWorld(c);
-      drawTiles(c, board.tiles, mono);
-    }
+    renderTiles(layer, lctx, false);
+    if (plain.width) renderTiles(plain, pctx, true);
   }
   function mixOf(f, now) {
-    const p = Math.min(1, Math.max(0, (now - f.t0) / 1400));
+    const p = f.dur > 0 ? Math.min(1, Math.max(0, (now - f.t0) / f.dur)) : now >= f.t0 ? 1 : 0;
     const e = p * p * (3 - 2 * p);
     return f.from + (f.to - f.from) * e;
   }
-  function setFade(f, to, now) { f.from = mixOf(f, now); f.to = to; f.t0 = now; }
-  function renderOrnate() {
-    const segs = [];
-    for (const t of board.tiles) for (const sg of t.deco) segs.push(sg);
-    // floral arabesque in every strapwork region, in the manner of Timurid mosaic faience
-    const F = faces(segs, W, H);
-    octx.setTransform(1, 0, 0, 1, 0, 0);
-    octx.clearRect(0, 0, ornate.width, ornate.height);
-    setWorld(octx);
-    ORNAMENT.render(octx, F, board.tiles);
-    drawStraps(octx, board.tiles);
-    ornateReady = true;
+  // with reduced motion, fades are instant and start without delay
+  function setFade(f, to, now, delay) {
+    f.from = mixOf(f, now); f.to = to;
+    f.t0 = now + (calm() ? 0 : delay || 0); f.dur = calm() ? 0 : FADE_MS;
+    requestDraw();
   }
+  function resetFades() { plainF.from = plainF.to = 0; ornF.from = ornF.to = 0; }
+  const fading = (f, now) => f.from !== f.to && now < f.t0 + f.dur;
+
+  function allocFinish() {
+    plain.width = canvas.width; plain.height = canvas.height;
+    renderTiles(plain, pctx, true);
+  }
+  function freeFinish() {
+    plain.width = plain.height = ornate.width = ornate.height = 0;
+    ornateReady = false; ornateAt = null; faceCache = null;
+    clearTimeout(ornateTimer);
+  }
+  function renderOrnate() {
+    // the regions depend only on the geometry, so they survive resizes
+    if (!faceCache) {
+      const segs = [];
+      for (const t of board.tiles) for (const sg of t.deco) segs.push(sg);
+      faceCache = faces(segs, W, H);
+    }
+    ornate.width = canvas.width; ornate.height = canvas.height;
+    setWorld(octx);
+    // floral arabesque in every strapwork region, in the manner of Timurid mosaic faience
+    ORNAMENT.render(octx, faceCache, board.tiles);
+    drawStraps(octx, board.tiles);
+    ornateReady = true; ornateAt = { sc, ox, oy, D };
+    requestDraw();
+  }
+  const ornateCurrent = () => ornateAt && ornateAt.sc === sc && ornateAt.ox === ox && ornateAt.oy === oy && ornateAt.D === D;
   function blitLayer(c, base, mix) {
+    if (!plain.width) mix = 0;
     c.save(); c.setTransform(1, 0, 0, 1, 0, 0);
     if (mix < 1) { c.globalAlpha = base * (1 - mix); c.drawImage(layer, 0, 0); }
     if (mix > 0) { c.globalAlpha = base * mix; c.drawImage(plain, 0, 0); }
     c.restore();
   }
+  function blitOrnate(c, alpha) {
+    c.save();
+    if (ornateCurrent()) c.setTransform(1, 0, 0, 1, 0, 0);
+    else {
+      // rendered for an older size (a redraw is pending): map its pixels back to world units
+      const a = ornateAt, k = a.D * a.sc;
+      c.transform(1 / k, 0, 0, -1 / k, -a.ox / a.sc, (a.oy + H * a.sc) / a.sc);
+    }
+    c.globalAlpha = alpha; c.drawImage(ornate, 0, 0);
+    c.restore();
+  }
 
+  // Resizes a canvas's bitmap only when its pixel size actually changes
+  // (assigning width or height reallocates and clears it even when unchanged).
   function sizeCanvas(cv, w, h) {
-    const d = dpr();
     cv.style.width = w + 'px'; cv.style.height = h + 'px';
-    cv.width = Math.round(w * d); cv.height = Math.round(h * d);
+    const pw = Math.round(w * dpr()), ph = Math.round(h * dpr());
+    if (cv.width === pw && cv.height === ph) return false;
+    cv.width = pw; cv.height = ph;
+    return true;
   }
   function drawIcon(cv, id, px, size) {
     sizeCanvas(cv, size, size);
     const c = cv.getContext('2d'), d = dpr(), t = TILES[id];
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    c.clearRect(0, 0, cv.width, cv.height);
     c.setTransform(d * px, 0, 0, -d * px, d * size / 2, d * size / 2);
-    c.clearRect(-size, -size, 2 * size, 2 * size);
     if (t) drawTiles(c, [place(t, 0, 0, 0)]);
   }
 
   function resize() {
     const r = $('#boardwrap').getBoundingClientRect();
     cssW = Math.max(40, Math.floor(r.width)); cssH = Math.max(40, Math.floor(r.height));
-    sizeCanvas(canvas, cssW, cssH);
-    layer.width = plain.width = ornate.width = canvas.width; layer.height = plain.height = ornate.height = canvas.height;
+    const dprChanged = dpr() !== D;
+    D = dpr();
+    if (sizeCanvas(canvas, cssW, cssH)) {
+      layer.width = canvas.width; layer.height = canvas.height;
+      if (plain.width) { plain.width = canvas.width; plain.height = canvas.height; }
+    }
+    layout();
+    if (dprChanged) drawLegend();
+    updateHand(); // the hand icons change size across the small-screen breakpoint
+    // the ornament is slow to paint: stretch the old one until resizing settles
+    if (ornateReady && !ornateCurrent()) { clearTimeout(ornateTimer); ornateTimer = setTimeout(renderOrnate, 200); }
+    requestDraw();
+  }
+  function layout() {
     sc = Math.min(cssW / (W + 1), cssH / (H + 1));
     ox = (cssW - W * sc) / 2; oy = (cssH - H * sc) / 2;
     if (board) renderLayer();
-    if (ornateReady) renderOrnate();
+  }
+  function relayout() { layout(); requestDraw(); }
+  // A move to a screen with another pixel ratio changes neither the CSS size (ResizeObserver)
+  // nor always fires window resize, so watch the ratio itself; each query matches one value.
+  function watchDpr() {
+    const mq = window.matchMedia(`(resolution: ${dpr()}dppx)`);
+    if (mq.addEventListener) mq.addEventListener('change', () => { resize(); watchDpr(); }, { once: true });
   }
 
   function draw(now) {
@@ -833,14 +991,14 @@ var ORNAMENT = (function () {
     ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.clip();
     ctx.fillStyle = '#1a1f3e'; ctx.fillRect(0, 0, W, H);
     blitLayer(ctx, 1, mix);
-    if (om > 0) { ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = om; ctx.drawImage(ornate, 0, 0); ctx.restore(); }
+    if (om > 0) blitOrnate(ctx, om);
     ctx.restore();
     ctx.strokeStyle = GOLD; ctx.lineJoin = 'miter';
     ctx.lineWidth = 0.07; ctx.strokeRect(0, 0, W, H);
     ctx.lineWidth = 0.02; ctx.strokeRect(-0.17, -0.17, W + 0.34, H + 0.34);
 
     if (phase === 'play') {
-      const pulse = 0.5 + 0.5 * Math.sin(now / 350);
+      const pulse = calm() ? 0.5 : 0.5 + 0.5 * Math.sin(now / 350);
       ctx.lineCap = 'round';
       for (const cnd of candList) {
         const e = cnd.edge, isSel = sel && sel.key === e.key;
@@ -858,9 +1016,8 @@ var ORNAMENT = (function () {
         ctx.globalAlpha = 1;
       }
     }
-    flashes = flashes.filter(f => now - f.t0 < f.dur);
     for (const f of flashes) {
-      const p = (now - f.t0) / f.dur;
+      const p = Math.max(0, (now - f.t0) / f.dur);
       ctx.globalAlpha = 1 - p;
       ctx.strokeStyle = f.kind === 'rosette' ? IVORY : GOLD;
       ctx.lineWidth = f.kind === 'rosette' ? 0.08 : 0.05;
@@ -868,7 +1025,15 @@ var ORNAMENT = (function () {
     }
     ctx.globalAlpha = 1;
   }
-  function loop(now) { draw(now); requestAnimationFrame(loop); }
+  // Frames are drawn on demand: after a change, and continuously only while something moves.
+  let frameReq = 0;
+  function requestDraw() { if (!frameReq) frameReq = requestAnimationFrame(frame); }
+  function frame(now) {
+    frameReq = 0;
+    flashes = flashes.filter(f => now - f.t0 < f.dur);
+    try { draw(now); } catch (err) { console.error(err); } // one bad frame must not stop rendering for good
+    if (flashes.length || fading(plainF, now) || fading(ornF, now) || (phase === 'play' && candList.length && !calm())) requestDraw();
+  }
 
   // ---------- game flow ----------
   function newPanel() {
@@ -876,21 +1041,28 @@ var ORNAMENT = (function () {
     board = new Board(W, H);
     board.add(place(TILES.decagon, 0, W / 2, H / 2));
     skips = SKIPS; queue = [];
-    plainF.from = plainF.to = 0; ornF.from = ornF.to = 0; ornateReady = false;
-    resize();
+    resetFades(); freeFinish();
+    relayout();
     setMsg('');
     refresh();
     $('#panel').textContent = panelIdx + 1;
   }
-  function ghost() { return sel ? cands.get(sel.key).placements[sel.idx] : null; }
-  function refresh() {
+  // Candidates hold light placements; the full one is built when previewed.
+  function ghost() {
+    if (!sel) return null;
+    const c = cands.get(sel.key), full = c.full || (c.full = []);
+    if (!full[sel.idx]) { const p = c.placements[sel.idx]; full[sel.idx] = place(p.tile, p.r, p.x, p.y); }
+    return full[sel.idx];
+  }
+  // `lead` is the message for the move that led here, kept in front of anything refresh adds.
+  function refresh(lead) {
     sel = null;
-    const free = board.freeEdges(), byType = new Map();
-    for (const id of TILE_IDS) { const c = board.candidates(TILES[id], free); if (c.size) byType.set(id, c); }
-    if (!byType.size) { finishPanel(); return; }
+    const byType = board.candidateSets();
+    if (!byType.size) { finishPanel(lead); return; }
     // only tiles that fit somewhere right now are dealt; tiles the board has outgrown leave the queue at no cost
-    const gone = queue.filter(id => !byType.has(id));
-    if (gone.length) setMsg('No longer fits and set aside: ' + gone.map(id => TILES[id].name.toLowerCase()).join(', ') + '.');
+    const gone = queue.filter(id => !byType.has(id)), msg = lead ? [lead] : [];
+    if (gone.length) msg.push('No longer fits and set aside: ' + gone.map(id => TILES[id].name.toLowerCase()).join(', ') + '.');
+    if (msg.length) setMsg(msg.join(' '));
     queue = queue.filter(id => byType.has(id));
     const bag = [];
     for (const id of byType.keys()) for (let k = 0; k < TILES[id].weight; k++) bag.push(id);
@@ -916,31 +1088,31 @@ var ORNAMENT = (function () {
     const res = board.add(pl);
     const gain = 10 + 8 * (res.shared - 1) + 25 * res.closed.length + 150 * res.rosettes.length;
     score += gain;
-    const now = performance.now();
-    for (const v of res.closed) flashes.push({ pos: v, t0: now, dur: 700, r0: 0.12, r1: 0.5, kind: 'joint' });
-    for (const t of res.rosettes) flashes.push({ pos: [t.x, t.y], t0: now, dur: 1100, r0: 1.5, r1: 2.4, kind: 'rosette' });
+    if (!calm()) {
+      const now = performance.now();
+      for (const v of res.closed) flashes.push({ pos: v, t0: now, dur: 700, r0: 0.12, r1: 0.5, kind: 'joint' });
+      for (const t of res.rosettes) flashes.push({ pos: [t.x, t.y], t0: now, dur: 1100, r0: 1.5, r1: 2.4, kind: 'rosette' });
+    }
     const bits = [];
     if (res.shared > 1) bits.push(res.shared + ' edges joined');
     if (res.closed.length) bits.push(res.closed.length + (res.closed.length === 1 ? ' joint closed' : ' joints closed'));
     if (res.rosettes.length) bits.push('rosette completed');
-    setMsg((bits.length ? bits.join(', ') + '. ' : '') + '+' + gain);
     queue.shift();
     renderLayer();
-    refresh();
+    refresh((bits.length ? bits.join(', ') + '. ' : '') + '+' + gain + '.');
     save();
   }
   function skip() {
     if (phase !== 'play' || skips <= 0) return;
     skips--;
-    setMsg('The ' + TILES[queue[0]].name.toLowerCase() + ' is set aside.');
+    const lead = 'The ' + TILES[queue[0]].name.toLowerCase() + ' is set aside.';
     queue.shift();
-    refresh();
+    refresh(lead);
     save();
   }
-  function coverage() { return board.coverage(); }
-  function finishPanel() {
+  function finishPanel(lead) {
     phase = 'done';
-    const cov = coverage(), pct = Math.floor(cov * 100 + 1e-9), perfect = cov >= 1 - 1e-6;
+    const cov = board.coverage(), pct = Math.floor(cov * 100 + 1e-9), perfect = cov >= 1 - 1e-6;
     const sym = board.symmetries(), symNames = [];
     if (sym.vertical) symNames.push('left–right mirror');
     if (sym.horizontal) symNames.push('top–bottom mirror');
@@ -952,13 +1124,14 @@ var ORNAMENT = (function () {
       perfect ? 'Not a gap in it. The master finds nothing to correct and sends for the flower painters.' :
       pct >= 95 ? 'Fine work; the plaster will hide a few small gaps.' :
       pct >= 85 ? 'Serviceable, but the gaps show.' : 'An apprentice\'s panel.';
-    setMsg(pct + '% filled. ' + verdict + (symNames.length ? ' Symmetry: ' + symNames.join(', ') + ' (bonus ×' + mult + ').' : '') +
+    setMsg((lead ? lead + ' ' : '') + pct + '% filled. ' + verdict + (symNames.length ? ' Symmetry: ' + symNames.join(', ') + ' (bonus ×' + mult + ').' : '') +
       ' ' + board.tiles.length + ' tiles, ' + board.rosettes + (board.rosettes === 1 ? ' rosette' : ' rosettes') +
       ', ' + [...board.vertMap.values()].filter(v => v.closed).length + ' closed joints. Panel bonus +' + bonus + '.');
     sel = null; candList = []; cands = new Map();
     const now = performance.now();
-    setFade(plainF, 1, now + 500);
-    if (perfect) { renderOrnate(); setFade(ornF, 1, now + 1900); }
+    allocFinish();
+    setFade(plainF, 1, now, 500);
+    if (perfect) { renderOrnate(); setFade(ornF, 1, now, 1900); }
     save();
     $('#btn-view').textContent = 'Show scaffolding';
     setDoneButtons(true);
@@ -969,6 +1142,12 @@ var ORNAMENT = (function () {
     $('#btn-view').hidden = !done;
     for (const id of ['#btn-turn', '#btn-set', '#btn-skip']) $(id).hidden = done;
   }
+  function startGame() {
+    phase = 'play'; panelIdx = 0; score = 0;
+    setDoneButtons(false);
+    newPanel(); save();
+  }
+
   // ---------- persistence ----------
   function save() {
     if (!board) return;
@@ -979,23 +1158,45 @@ var ORNAMENT = (function () {
       }));
     } catch (e) { /* storage unavailable; play on without saving */ }
   }
+  function clearSave() { try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* nothing to clear */ } }
+  // Returns { s, board } for a usable save; an unreadable one is deleted.
   function loadSave() {
-    try {
-      const s = JSON.parse(localStorage.getItem(SAVE_KEY));
-      if (s && Array.isArray(s.tiles) && s.tiles.length && (s.phase === 'play' || s.phase === 'done')) return s;
-    } catch (e) { /* no usable save */ }
+    let raw = null;
+    try { raw = localStorage.getItem(SAVE_KEY); } catch (e) { return null; }
+    if (raw === null) return null;
+    try { const v = parseSave(JSON.parse(raw)); if (v) return v; } catch (e) { /* fall through */ }
+    clearSave();
     return null;
   }
-  function restore(s) {
+  const isTile = id => typeof id === 'string' && Object.prototype.hasOwnProperty.call(TILES, id);
+  const isInt = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
+  function parseSave(s) {
+    if (!s || typeof s !== 'object' || (s.phase !== 'play' && s.phase !== 'done')) return null;
+    if (!isInt(s.panelIdx, 0, 1e6) || !Number.isFinite(s.score) || s.score < 0 || !isInt(s.skips, 0, SKIPS)) return null;
+    const [w, h] = PANELS[Math.min(s.panelIdx, PANELS.length - 1)];
+    if (s.W !== w || s.H !== h) return null;
+    if (!Array.isArray(s.queue) || s.queue.length > 3 || !s.queue.every(isTile)) return null;
+    if (s.msg !== undefined && typeof s.msg !== 'string') return null;
+    if (!Array.isArray(s.tiles) || !s.tiles.length) return null;
+    const b = new Board(w, h);
+    for (const t of s.tiles) {
+      if (!t || !isTile(t.id) || !isInt(t.r, 0, 9) || !Number.isFinite(t.x) || !Number.isFinite(t.y)) return null;
+      const pl = place(TILES[t.id], t.r, t.x, t.y);
+      if (!b.fits(pl)) return null; // an edited or stale save must not rebuild into overlaps
+      b.add(pl);
+    }
+    return { s, board: b };
+  }
+  function restore({ s, board: b }) {
     panelIdx = s.panelIdx; score = s.score; skips = s.skips; queue = s.queue.slice(); W = s.W; H = s.H;
-    board = new Board(W, H);
-    for (const t of s.tiles) board.add(place(TILES[t.id], t.r, t.x, t.y));
-    plainF.from = plainF.to = 0; ornF.from = ornF.to = 0; ornateReady = false;
+    board = b;
+    resetFades(); freeFinish();
     $('#panel').textContent = panelIdx + 1;
-    resize();
+    relayout();
     if (s.phase === 'done') {
       phase = 'done'; sel = null; candList = []; cands = new Map();
       setMsg(s.msg || '');
+      allocFinish();
       plainF.from = plainF.to = 1;
       if (board.coverage() >= 1 - 1e-6) { renderOrnate(); ornF.from = ornF.to = 1; }
       $('#btn-view').textContent = 'Show scaffolding';
@@ -1014,22 +1215,26 @@ var ORNAMENT = (function () {
   function updateHud() {
     $('#score').textContent = score;
     $('#skips').textContent = skips;
-    $('#filled').textContent = board ? Math.floor(coverage() * 100 + 1e-9) + '%' : '0%';
+    $('#filled').textContent = board ? Math.floor(board.coverage() * 100 + 1e-9) + '%' : '0%';
     $('#btn-turn').disabled = !(sel && cands.get(sel.key).placements.length > 1);
     $('#btn-set').disabled = !sel;
     $('#btn-skip').disabled = skips <= 0 || phase !== 'play';
+    requestDraw();
   }
   function setMsg(s) { $('#msg').textContent = s; }
-  function showOverlay(view) {
-    overlay.querySelectorAll('[data-view]').forEach(el => el.classList.toggle('on', el.dataset.view === view));
-    overlay.classList.add('show');
+  function hideOverlay() {
+    overlay.classList.remove('show');
+    if (overlay.contains(document.activeElement)) document.activeElement.blur();
   }
 
   // ---------- input ----------
   let press = null;
-  canvas.addEventListener('pointerdown', e => { press = { x: e.clientX, y: e.clientY, t: performance.now() }; });
+  canvas.addEventListener('pointerdown', e => {
+    // primary pointer and main button only: no right-clicks, no second fingers
+    press = e.isPrimary && e.button === 0 ? { x: e.clientX, y: e.clientY } : null;
+  });
   canvas.addEventListener('pointerup', e => {
-    if (!press) return;
+    if (!press || !e.isPrimary) return;
     const moved = Math.hypot(e.clientX - press.x, e.clientY - press.y);
     press = null;
     if (moved > 12 || phase !== 'play') return;
@@ -1049,8 +1254,25 @@ var ORNAMENT = (function () {
   $('#btn-turn').addEventListener('click', () => { turn(); updateHud(); });
   $('#btn-set').addEventListener('click', setTile);
   $('#btn-skip').addEventListener('click', skip);
-  $('#btn-start').addEventListener('click', () => { overlay.classList.remove('show'); phase = 'play'; panelIdx = 0; score = 0; newPanel(); save(); });
-  $('#btn-continue').addEventListener('click', () => { const s = loadSave(); overlay.classList.remove('show'); if (s) restore(s); else { phase = 'play'; panelIdx = 0; score = 0; newPanel(); } });
+  let hasSave = false, replaceArmed = false;
+  $('#btn-start').addEventListener('click', () => {
+    if (hasSave && !replaceArmed) { // first press only warns
+      replaceArmed = true;
+      $('#new-warn').hidden = false;
+      $('#btn-start').textContent = 'Replace it';
+      return;
+    }
+    hideOverlay(); startGame();
+  });
+  $('#btn-continue').addEventListener('click', () => {
+    hideOverlay();
+    const v = loadSave();
+    if (v) {
+      try { restore(v); return; } catch (err) { console.error(err); clearSave(); }
+    }
+    startGame();
+    setMsg('The saved game could not be read, so a new game has begun.');
+  });
   $('#btn-view').addEventListener('click', () => {
     const toPlain = plainF.to < 0.5, now = performance.now();
     setFade(plainF, toPlain ? 1 : 0, now);
@@ -1058,11 +1280,33 @@ var ORNAMENT = (function () {
     $('#btn-view').textContent = toPlain ? 'Show scaffolding' : 'Hide scaffolding';
   });
   $('#btn-next').addEventListener('click', () => { if (phase !== 'done') return; setDoneButtons(false); phase = 'play'; panelIdx++; newPanel(); save(); });
+  // A mouse or touch click leaves focus on the button; drop it so that Enter and Space
+  // go back to the board (keyboard-activated clicks have detail 0 and keep focus).
+  document.addEventListener('click', e => {
+    const b = e.target instanceof Element && e.target.closest('button');
+    if (b && e.detail > 0) b.blur();
+  });
+  const focusedButton = e => {
+    const b = e.target instanceof Element && e.target.closest('button');
+    return b && b.getClientRects().length ? b : null;
+  };
 
   window.addEventListener('keydown', e => {
-    if (phase === 'done') { if (e.key === 'Enter') $('#btn-next').click(); return; }
-    if (phase !== 'play') { if (e.key === 'Enter') { const b = overlay.querySelector('[data-view].on button'); if (b) b.click(); } return; }
+    if (e.ctrlKey || e.metaKey || e.altKey) return; // leave browser shortcuts alone
     const k = e.key;
+    // a focused button activates itself on Enter/Space; acting here too would fire twice
+    if ((k === 'Enter' || k === ' ') && focusedButton(e)) return;
+    if (phase === 'done') {
+      if (k === 'Enter') { e.preventDefault(); if (!e.repeat) $('#btn-next').click(); }
+      return;
+    }
+    if (phase !== 'play') {
+      if (k === 'Enter') {
+        const b = [...overlay.querySelectorAll('[data-view].on button')].find(b => !b.hidden);
+        if (b) { e.preventDefault(); if (!e.repeat) b.click(); }
+      }
+      return;
+    }
     if (k === 'ArrowLeft' || k === 'ArrowRight') {
       e.preventDefault();
       if (!candList.length) return;
@@ -1070,30 +1314,159 @@ var ORNAMENT = (function () {
       i = (i + (k === 'ArrowRight' ? 1 : -1) + candList.length) % candList.length;
       selectEdge(candList[i].edge.key, 0);
     } else if (k === 'ArrowUp' || k === 'ArrowDown' || k === 'r' || k === 'R') { e.preventDefault(); turn(); updateHud(); }
-    else if (k === 'Enter' || k === ' ') { e.preventDefault(); setTile(); }
-    else if (k === 's' || k === 'S') skip();
+    else if (k === 'Enter' || k === ' ') { e.preventDefault(); if (!e.repeat) setTile(); }
+    else if (k === 's' || k === 'S') { if (!e.repeat) skip(); } // holding S must not burn every set-aside
     else if (k === 'Escape') { sel = null; updateHud(); }
   });
 
   // ---------- title legend ----------
-  const legend = $('#legend');
-  for (const id of TILE_IDS) {
+  const legendIcons = TILE_IDS.map(id => {
     const fig = document.createElement('figure');
     const cv = document.createElement('canvas');
-    drawIcon(cv, id, 16, 60);
     fig.appendChild(cv);
     const cap = document.createElement('figcaption');
     cap.textContent = TILES[id].name;
     fig.appendChild(cap);
-    legend.appendChild(fig);
+    $('#legend').appendChild(fig);
+    return [cv, id];
+  });
+  function drawLegend() { for (const [cv, id] of legendIcons) drawIcon(cv, id, 16, 60); }
+
+  // ---------- self-test (runs only with #test) ----------
+  // Checks the game logic against slow, direct reference versions on seeded games of its
+  // own. It never touches the game in progress or the saved game.
+  function selfTest() {
+    const G = GIRIH, fails = [];
+    let n = 0;
+    const ok = (cond, name) => { n++; if (!cond) fails.push(name); };
+    const near = (a, b, tol) => Math.abs(a - b) < (tol || 1e-9);
+    const rng = seed => () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32;
+    const keyOf = p => G.vertsKey((p.verts ? p : place(p.tile, p.r, p.x, p.y)).verts);
+    // The direct way to list placements against an edge: try every edge of the tile and
+    // drop duplicates by their vertices.
+    const allAgainst = (tile, edge) => {
+      const seen = new Set(), out = [];
+      for (let i = 0; i < tile.n; i++) {
+        const r = ((edge.dir + 5 - tile.rots[0].dirs[i]) % 10 + 10) % 10, m = tile.rots[r].mids[i];
+        const pl = place(tile, r, edge.mid[0] - m[0], edge.mid[1] - m[1]), k = keyOf(pl);
+        if (!seen.has(k)) { seen.add(k); out.push(pl); }
+      }
+      return out;
+    };
+    // tile id -> edge key -> sorted placement keys, as one comparable string
+    const canon = sets => JSON.stringify([...sets].map(([id, m]) => [id, [...m].map(([k, pls]) => [k, pls]).sort()]));
+    const fromBoard = b => canon([...b.candidateSets()].map(([id, m]) => [id, [...m].map(([k, c]) => [k, c.placements.map(keyOf).sort()])]));
+    const direct = b => {
+      const out = new Map();
+      for (const { e } of b.freeEdges()) for (const id of TILE_IDS) {
+        const keys = allAgainst(TILES[id], e).filter(pl => b.fits(pl)).map(keyOf).sort();
+        if (!keys.length) continue;
+        if (!out.has(id)) out.set(id, []);
+        out.get(id).push([e.key, keys]);
+      }
+      return canon(TILE_IDS.filter(id => out.has(id)).map(id => [id, out.get(id)]));
+    };
+    try {
+      // tiles: unit edges, the right angle sum, and two straps per edge leaving it at 54°
+      for (const id of TILE_IDS) {
+        const t = TILES[id], S = t.rots[0], v = S.verts, next = i => v[(i + 1) % t.n];
+        ok(v.every((p, i) => near(Math.hypot(next(i)[0] - p[0], next(i)[1] - p[1]), 1)), id + ': edges have unit length');
+        ok(t.angles.reduce((a, b) => a + b, 0) === (t.n - 2) * 180, id + ': interior angles sum to (n - 2) × 180°');
+        ok(S.deco.length === 2 * t.n, id + ': every strap ends at a crossing');
+        ok(S.deco.every(([a, b]) => {
+          const i = S.mids.findIndex(m => near(m[0], a[0]) && near(m[1], a[1]));
+          if (i < 0) return false;
+          const e = [next(i)[0] - v[i][0], next(i)[1] - v[i][1]], d = [b[0] - a[0], b[1] - a[1]];
+          return near(Math.abs(e[0] * d[0] + e[1] * d[1]) / Math.hypot(d[0], d[1]), Math.cos(54 * G.DEG));
+        }), id + ': straps leave their edge midpoint at 54°');
+      }
+      // symmetry: the per-tile choices give the same placements as the direct way, for all ten edge directions
+      const distinct = { decagon: 1, hexagon: 3, bowtie: 3, pentagon: 1, rhombus: 2 };
+      for (const id of TILE_IDS) {
+        const t = TILES[id];
+        ok(t.against.length === distinct[id], id + ': ' + t.against.length + ' distinct placements per edge, expected ' + distinct[id]);
+        for (let dir = 0; dir < 10; dir++) {
+          const edge = { dir, mid: [0.3, 0.7] };
+          ok(G.placementsAgainst(t, edge).map(keyOf).sort().join() === allAgainst(t, edge).map(keyOf).sort().join(), id + ': placements against an edge of direction ' + dir);
+        }
+      }
+      // seeded games: the cached, incremental candidate search against the direct one
+      let saveBoard = null;
+      for (const [seed, pi] of [[1, 0], [2, 1], [3, 3]]) {
+        const [w, h] = PANELS[pi], R = rng(seed), b = new Board(w, h), game = 'game ' + seed + ' step ';
+        b.add(place(TILES.decagon, 0, w / 2, h / 2));
+        for (let step = 0; ; step++) {
+          const sets = b.candidateSets();
+          if (step % 8 === 0 || !sets.size) ok(fromBoard(b) === direct(b), game + step + ': candidates match the direct search');
+          if (step === 12) {
+            // as restore() does: many adds before the first search
+            const again = new Board(w, h);
+            for (const t of b.tiles) again.add(place(t.tile, t.r, t.x, t.y));
+            ok(fromBoard(again) === fromBoard(b), game + step + ': a rebuilt board has the same candidates');
+            if (pi === 0) saveBoard = b.tiles.map(t => ({ id: t.tile.id, r: t.r, x: t.x, y: t.y }));
+          }
+          if (!sets.size) break;
+          const ids = [...sets.keys()], cs = [...sets.get(ids[Math.floor(R() * ids.length)]).values()];
+          const c = cs[Math.floor(R() * cs.length)], p = c.placements[Math.floor(R() * c.placements.length)];
+          b.add(place(p.tile, p.r, p.x, p.y));
+        }
+        let area = 0;
+        for (const t of b.tiles) area += G.areaInRect(t, w, h);
+        ok(b.coverage() === area / (w * h), game + 'end: running coverage equals the direct sum');
+        const rosettes = b.tiles.filter(t => t.tile.id === 'decagon' && t.edges.every(e => b.edgeMap.get(e.key).length > 1)).length;
+        ok(b.rosettes === rosettes, game + 'end: rosette count matches a full scan (' + b.rosettes + ' vs ' + rosettes + ')');
+        // The strapwork regions cover the panel. (They tile it exactly only on a flawless panel:
+        // a strap loop cut off by a gap is not subtracted from the region around it.)
+        const F = faces(b.tiles.flatMap(t => t.deco), w, h);
+        let gaps = 0;
+        for (let x = 0.13; x < w; x += 0.5) for (let y = 0.17; y < h; y += 0.5) if (!F.some(f => G.pointInPoly(f.poly, [x, y]))) gaps++;
+        ok(gaps === 0, game + 'end: strapwork regions cover the panel (' + gaps + ' sample points uncovered)');
+      }
+      const frame = faces([], 3, 4);
+      ok(frame.length === 1 && near(Math.abs(G.polyArea(frame[0].poly)), 12), 'an empty panel is one region');
+      // saves: a real one is accepted, damaged ones are refused
+      const good = { panelIdx: 0, score: 120, skips: 2, queue: ['hexagon', 'bowtie', 'decagon'], phase: 'play', W: 8, H: 11, msg: '+10.', tiles: saveBoard };
+      const v = parseSave(JSON.parse(JSON.stringify(good)));
+      ok(v && v.board.tiles.length === saveBoard.length, 'save: a valid save is accepted and rebuilt');
+      const bad = {
+        'not an object': null, 'title phase': { ...good, phase: 'title' }, 'no queue': { ...good, queue: undefined },
+        'unknown tile in queue': { ...good, queue: ['star'] }, 'unknown tile': { ...good, tiles: [...good.tiles, { id: 'star', r: 0, x: 1, y: 1 }] },
+        'inherited name as tile': { ...good, tiles: [{ id: 'constructor', r: 0, x: 4, y: 5.5 }] },
+        'rotation out of range': { ...good, tiles: [{ ...good.tiles[0], r: 10 }] }, 'coordinate not a number': { ...good, tiles: [{ ...good.tiles[0], x: null }] },
+        'overlapping tiles': { ...good, tiles: [...good.tiles, good.tiles[1]] }, 'no tiles': { ...good, tiles: [] },
+        'wrong panel size': { ...good, W: 9 }, 'too many set-asides': { ...good, skips: SKIPS + 1 }, 'negative score': { ...good, score: -1 },
+      };
+      for (const name in bad) ok(parseSave(bad[name]) === null, 'save: refuses ' + name);
+      // ornament centre: the centroid for a convex region, an interior point otherwise
+      const L = [[0, 0], [4, 0], [4, 0.5], [0.5, 0.5], [0.5, 4], [0, 4]], cL = ORNAMENT.centre(L);
+      ok(G.pointInPoly(L, cL) && Math.min(cL[0], cL[1], 0.5 - Math.min(cL[0], cL[1])) > 0.2, 'ornament: an L-shaped region gets a centre well inside it');
+      const sq = ORNAMENT.centre([[0, 0], [2, 0], [2, 1], [0, 1]]);
+      ok(near(sq[0], 1) && near(sq[1], 0.5), 'ornament: a convex region keeps its centroid');
+    } catch (e) { fails.push('exception during self-test: ' + (e && e.message)); }
+    return { total: n, failures: fails };
+  }
+  // Test contract shared with tools/: set window.portaTestResult before load, then show the result on the page.
+  function runTestsIfRequested() {
+    if (location.hash !== '#test') return;
+    const r = window.portaTestResult = selfTest();
+    let el = $('#test-report');
+    if (!el) { el = document.createElement('div'); el.id = 'test-report'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
+    el.className = r.failures.length ? 'fail' : 'pass';
+    el.textContent = r.failures.length
+      ? 'Self-test: ' + r.failures.length + ' of ' + r.total + ' checks FAILED\n' + r.failures.map(f => '\u2717 ' + f).join('\n')
+      : 'Self-test: all ' + r.total + ' checks passed';
+    if (r.failures.length) console.error('[girih] self-test: ' + r.failures.length + ' of ' + r.total + ' checks failed');
   }
 
   // ---------- boot ----------
-  if (loadSave()) { $('#btn-continue').hidden = false; $('#btn-start').textContent = 'New game'; }
+  if (loadSave()) { hasSave = true; $('#btn-continue').hidden = false; $('#btn-start').textContent = 'New game'; }
+  if (reduceMotion.addEventListener) reduceMotion.addEventListener('change', requestDraw);
   new ResizeObserver(resize).observe($('#boardwrap'));
-  window.addEventListener('resize', resize);
+  D = 0; // forces the first resize to draw the legend
   resize();
-  requestAnimationFrame(loop);
+  watchDpr();
+  runTestsIfRequested();
+  window.addEventListener('hashchange', runTestsIfRequested);
 })();
 </script>
 </body>
