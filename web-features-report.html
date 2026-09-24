@@ -1,7 +1,21 @@
 <!DOCTYPE html>
+<!--
+  Web features for a self-contained HTML file
+
+  A report of which web-features (https://github.com/web-platform-dx/web-features)
+  can be relied on in a single HTML file opened from disk, with hand-curated
+  verdicts for features that need a network, a real origin, or a permission.
+  Use it to decide what the apps in this repo may use.
+
+  The first visit needs a network connection: the dataset (about 5 MB) is
+  fetched from jsDelivr, with unpkg as a fallback, and cached in
+  localStorage. After that the page works offline. Append #src=https://.../
+  to the URL to fetch from a different mirror.
+-->
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src https:; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Web features for a self-contained HTML file</title>
 <meta name="description" content="Which web-features work in one offline HTML file. Loads the web-features dataset from a CDN and caches it locally.">

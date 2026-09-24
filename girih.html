@@ -1,7 +1,23 @@
 <!DOCTYPE html>
+<!--
+  Girih
+
+  A tile-laying puzzle built on the five girih tiles of Persian strapwork.
+  Fill each panel outward from the central star: tap a lit edge to try the
+  current tile there, tap the same edge again to turn it, then press Set.
+  The panel is judged when nothing more will fit, and a flawless panel is
+  painted with flowers.
+
+  Keyboard: arrows choose an edge, r turns the tile, enter sets it, s sets it
+  aside.
+
+  Progress is saved in localStorage, so closing the page and coming back
+  offers to continue.
+-->
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="theme-color" content="#0f1226">
 <title>Girih</title>
