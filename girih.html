@@ -252,10 +252,10 @@ var GIRIH = (function () {
   const DEFS = {
     // Deal weights loosely follow the historical mix: hexagons and bowties do most of the
     // work, decagons anchor the design, pentagons and rhombuses are occasional. The 5:3
-    // hexagon:bowtie weighting is a nod to the golden ratio (about 1.618), which Lu &
-    // Steinhardt (Science 315, 2007) relate to tile-count ratios in the self-similar
-    // Darb-i Imam subdivision; whether that holds for hexagons versus bowties in
-    // particular is unverified.
+    // hexagon:bowtie weighting approximates the golden ratio (about 1.618): Lu & Steinhardt
+    // (Science 315, 2007, p. 1108) state that repeatedly applying the Darb-i Imam subdivision
+    // rule gives a hexagon-to-bowtie ratio that tends to it. The real spandrel is a finite
+    // pattern, only about two levels deep, so its own counts need not match.
     decagon:  { name: 'Decagon',           angles: [144, 144, 144, 144, 144, 144, 144, 144, 144, 144], weight: 2 },
     hexagon:  { name: 'Elongated hexagon', angles: [72, 144, 144, 72, 144, 144], weight: 5 },
     bowtie:   { name: 'Bowtie',            angles: [72, 72, 216, 72, 72, 216], weight: 3 },
