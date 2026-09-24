@@ -17,7 +17,7 @@ for (const app of apps) {
     const markup = markupOnly(src);
 
     test('starts with a header comment describing the app', () => {
-      const m = /^<!DOCTYPE html>\s*<!--([\s\S]*?)-->/i.exec(src);
+      const m = /^<!DOCTYPE html>\n<!--([\s\S]*?)-->/i.exec(src);
       expect(m, 'expected <!-- ... --> right after <!DOCTYPE html>').not.toBeNull();
       expect(m[1].trim(), 'header comment is empty').not.toBe('');
     });
