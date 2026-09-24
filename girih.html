@@ -8,11 +8,15 @@
   The panel is judged when nothing more will fit, and a flawless panel is
   painted with flowers.
 
-  Keyboard: arrows choose an edge, r turns the tile, enter sets it, s sets it
-  aside.
+  Keyboard: left and right arrows choose an edge, up and down arrows or r
+  turn the tile, enter or space sets it, s sets it aside.
 
   Progress is saved in localStorage, so closing the page and coming back
   offers to continue.
+
+  Open this file with #test at the end of the URL to run the built-in
+  self-test of the game logic and show the results on the page. The test
+  leaves the game and the saved game alone.
 -->
 <html lang="en">
 <head>
@@ -76,6 +80,9 @@
   .actions button:active:not(:disabled) { filter: brightness(1.15); }
   #hint { text-align: center; color: var(--ink-dim); font-size: 13px; font-style: italic; }
   @media (pointer: coarse) { #hint { display: none; } }
+  #test-report { position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 10; max-height: 40vh; overflow: auto; padding: 10px 14px; border: 1px solid; background: var(--panel); font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; -webkit-user-select: text; user-select: text; }
+  #test-report.pass { color: #8fd19e; }
+  #test-report.fail { color: #f08a7a; }
 
   @media (max-width: 640px), (orientation: portrait) {
     #app { gap: 6px; }
@@ -801,7 +808,7 @@ var ORNAMENT = (function () {
       c.restore();
     }
   }
-  return { render, palette: P };
+  return { render, palette: P, centre };
 })();
 </script>
 <script>
@@ -1325,6 +1332,132 @@ var ORNAMENT = (function () {
   });
   function drawLegend() { for (const [cv, id] of legendIcons) drawIcon(cv, id, 16, 60); }
 
+  // ---------- self-test (runs only with #test) ----------
+  // Checks the game logic against slow, direct reference versions on seeded games of its
+  // own. It never touches the game in progress or the saved game.
+  function selfTest() {
+    const G = GIRIH, fails = [];
+    let n = 0;
+    const ok = (cond, name) => { n++; if (!cond) fails.push(name); };
+    const near = (a, b, tol) => Math.abs(a - b) < (tol || 1e-9);
+    const rng = seed => () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32;
+    const keyOf = p => G.vertsKey((p.verts ? p : place(p.tile, p.r, p.x, p.y)).verts);
+    // The direct way to list placements against an edge: try every edge of the tile and
+    // drop duplicates by their vertices.
+    const allAgainst = (tile, edge) => {
+      const seen = new Set(), out = [];
+      for (let i = 0; i < tile.n; i++) {
+        const r = ((edge.dir + 5 - tile.rots[0].dirs[i]) % 10 + 10) % 10, m = tile.rots[r].mids[i];
+        const pl = place(tile, r, edge.mid[0] - m[0], edge.mid[1] - m[1]), k = keyOf(pl);
+        if (!seen.has(k)) { seen.add(k); out.push(pl); }
+      }
+      return out;
+    };
+    // tile id -> edge key -> sorted placement keys, as one comparable string
+    const canon = sets => JSON.stringify([...sets].map(([id, m]) => [id, [...m].map(([k, pls]) => [k, pls]).sort()]));
+    const fromBoard = b => canon([...b.candidateSets()].map(([id, m]) => [id, [...m].map(([k, c]) => [k, c.placements.map(keyOf).sort()])]));
+    const direct = b => {
+      const out = new Map();
+      for (const { e } of b.freeEdges()) for (const id of TILE_IDS) {
+        const keys = allAgainst(TILES[id], e).filter(pl => b.fits(pl)).map(keyOf).sort();
+        if (!keys.length) continue;
+        if (!out.has(id)) out.set(id, []);
+        out.get(id).push([e.key, keys]);
+      }
+      return canon(TILE_IDS.filter(id => out.has(id)).map(id => [id, out.get(id)]));
+    };
+    try {
+      // tiles: unit edges, the right angle sum, and two straps per edge leaving it at 54°
+      for (const id of TILE_IDS) {
+        const t = TILES[id], S = t.rots[0], v = S.verts, next = i => v[(i + 1) % t.n];
+        ok(v.every((p, i) => near(Math.hypot(next(i)[0] - p[0], next(i)[1] - p[1]), 1)), id + ': edges have unit length');
+        ok(t.angles.reduce((a, b) => a + b, 0) === (t.n - 2) * 180, id + ': interior angles sum to (n - 2) × 180°');
+        ok(S.deco.length === 2 * t.n, id + ': every strap ends at a crossing');
+        ok(S.deco.every(([a, b]) => {
+          const i = S.mids.findIndex(m => near(m[0], a[0]) && near(m[1], a[1]));
+          if (i < 0) return false;
+          const e = [next(i)[0] - v[i][0], next(i)[1] - v[i][1]], d = [b[0] - a[0], b[1] - a[1]];
+          return near(Math.abs(e[0] * d[0] + e[1] * d[1]) / Math.hypot(d[0], d[1]), Math.cos(54 * G.DEG));
+        }), id + ': straps leave their edge midpoint at 54°');
+      }
+      // symmetry: the per-tile choices give the same placements as the direct way, for all ten edge directions
+      const distinct = { decagon: 1, hexagon: 3, bowtie: 3, pentagon: 1, rhombus: 2 };
+      for (const id of TILE_IDS) {
+        const t = TILES[id];
+        ok(t.against.length === distinct[id], id + ': ' + t.against.length + ' distinct placements per edge, expected ' + distinct[id]);
+        for (let dir = 0; dir < 10; dir++) {
+          const edge = { dir, mid: [0.3, 0.7] };
+          ok(G.placementsAgainst(t, edge).map(keyOf).sort().join() === allAgainst(t, edge).map(keyOf).sort().join(), id + ': placements against an edge of direction ' + dir);
+        }
+      }
+      // seeded games: the cached, incremental candidate search against the direct one
+      let saveBoard = null;
+      for (const [seed, pi] of [[1, 0], [2, 1], [3, 3]]) {
+        const [w, h] = PANELS[pi], R = rng(seed), b = new Board(w, h), game = 'game ' + seed + ' step ';
+        b.add(place(TILES.decagon, 0, w / 2, h / 2));
+        for (let step = 0; ; step++) {
+          const sets = b.candidateSets();
+          if (step % 8 === 0 || !sets.size) ok(fromBoard(b) === direct(b), game + step + ': candidates match the direct search');
+          if (step === 12) {
+            // as restore() does: many adds before the first search
+            const again = new Board(w, h);
+            for (const t of b.tiles) again.add(place(t.tile, t.r, t.x, t.y));
+            ok(fromBoard(again) === fromBoard(b), game + step + ': a rebuilt board has the same candidates');
+            if (pi === 0) saveBoard = b.tiles.map(t => ({ id: t.tile.id, r: t.r, x: t.x, y: t.y }));
+          }
+          if (!sets.size) break;
+          const ids = [...sets.keys()], cs = [...sets.get(ids[Math.floor(R() * ids.length)]).values()];
+          const c = cs[Math.floor(R() * cs.length)], p = c.placements[Math.floor(R() * c.placements.length)];
+          b.add(place(p.tile, p.r, p.x, p.y));
+        }
+        let area = 0;
+        for (const t of b.tiles) area += G.areaInRect(t, w, h);
+        ok(b.coverage() === area / (w * h), game + 'end: running coverage equals the direct sum');
+        const rosettes = b.tiles.filter(t => t.tile.id === 'decagon' && t.edges.every(e => b.edgeMap.get(e.key).length > 1)).length;
+        ok(b.rosettes === rosettes, game + 'end: rosette count matches a full scan (' + b.rosettes + ' vs ' + rosettes + ')');
+        // The strapwork regions cover the panel. (They tile it exactly only on a flawless panel:
+        // a strap loop cut off by a gap is not subtracted from the region around it.)
+        const F = faces(b.tiles.flatMap(t => t.deco), w, h);
+        let gaps = 0;
+        for (let x = 0.13; x < w; x += 0.5) for (let y = 0.17; y < h; y += 0.5) if (!F.some(f => G.pointInPoly(f.poly, [x, y]))) gaps++;
+        ok(gaps === 0, game + 'end: strapwork regions cover the panel (' + gaps + ' sample points uncovered)');
+      }
+      const frame = faces([], 3, 4);
+      ok(frame.length === 1 && near(Math.abs(G.polyArea(frame[0].poly)), 12), 'an empty panel is one region');
+      // saves: a real one is accepted, damaged ones are refused
+      const good = { panelIdx: 0, score: 120, skips: 2, queue: ['hexagon', 'bowtie', 'decagon'], phase: 'play', W: 8, H: 11, msg: '+10.', tiles: saveBoard };
+      const v = parseSave(JSON.parse(JSON.stringify(good)));
+      ok(v && v.board.tiles.length === saveBoard.length, 'save: a valid save is accepted and rebuilt');
+      const bad = {
+        'not an object': null, 'title phase': { ...good, phase: 'title' }, 'no queue': { ...good, queue: undefined },
+        'unknown tile in queue': { ...good, queue: ['star'] }, 'unknown tile': { ...good, tiles: [...good.tiles, { id: 'star', r: 0, x: 1, y: 1 }] },
+        'inherited name as tile': { ...good, tiles: [{ id: 'constructor', r: 0, x: 4, y: 5.5 }] },
+        'rotation out of range': { ...good, tiles: [{ ...good.tiles[0], r: 10 }] }, 'coordinate not a number': { ...good, tiles: [{ ...good.tiles[0], x: null }] },
+        'overlapping tiles': { ...good, tiles: [...good.tiles, good.tiles[1]] }, 'no tiles': { ...good, tiles: [] },
+        'wrong panel size': { ...good, W: 9 }, 'too many set-asides': { ...good, skips: SKIPS + 1 }, 'negative score': { ...good, score: -1 },
+      };
+      for (const name in bad) ok(parseSave(bad[name]) === null, 'save: refuses ' + name);
+      // ornament centre: the centroid for a convex region, an interior point otherwise
+      const L = [[0, 0], [4, 0], [4, 0.5], [0.5, 0.5], [0.5, 4], [0, 4]], cL = ORNAMENT.centre(L);
+      ok(G.pointInPoly(L, cL) && Math.min(cL[0], cL[1], 0.5 - Math.min(cL[0], cL[1])) > 0.2, 'ornament: an L-shaped region gets a centre well inside it');
+      const sq = ORNAMENT.centre([[0, 0], [2, 0], [2, 1], [0, 1]]);
+      ok(near(sq[0], 1) && near(sq[1], 0.5), 'ornament: a convex region keeps its centroid');
+    } catch (e) { fails.push('exception during self-test: ' + (e && e.message)); }
+    return { total: n, failures: fails };
+  }
+  // Test contract shared with tools/: set window.portaTestResult before load, then show the result on the page.
+  function runTestsIfRequested() {
+    if (location.hash !== '#test') return;
+    const r = window.portaTestResult = selfTest();
+    let el = $('#test-report');
+    if (!el) { el = document.createElement('div'); el.id = 'test-report'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
+    el.className = r.failures.length ? 'fail' : 'pass';
+    el.textContent = r.failures.length
+      ? 'Self-test: ' + r.failures.length + ' of ' + r.total + ' checks FAILED\n' + r.failures.map(f => '\u2717 ' + f).join('\n')
+      : 'Self-test: all ' + r.total + ' checks passed';
+    if (r.failures.length) console.error('[girih] self-test: ' + r.failures.length + ' of ' + r.total + ' checks failed');
+  }
+
   // ---------- boot ----------
   if (loadSave()) { hasSave = true; $('#btn-continue').hidden = false; $('#btn-start').textContent = 'New game'; }
   if (reduceMotion.addEventListener) reduceMotion.addEventListener('change', requestDraw);
@@ -1332,6 +1465,8 @@ var ORNAMENT = (function () {
   D = 0; // forces the first resize to draw the legend
   resize();
   watchDpr();
+  runTestsIfRequested();
+  window.addEventListener('hashchange', runTestsIfRequested);
 })();
 </script>
 </body>
