@@ -1,0 +1,12 @@
+{
+  "name": "porta-pages-tools",
+  "private": true,
+  "description": "Development checks for the porta-pages apps. Nothing here is needed to use the apps.",
+  "scripts": {
+    "test": "playwright test",
+    "test:chromium": "playwright test --project=static --project=chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0"
+  }
+}

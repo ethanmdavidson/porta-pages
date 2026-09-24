@@ -1,7 +1,21 @@
 <!DOCTYPE html>
+<!--
+  Should I open the windows?
+
+  Compares indoor and outdoor air by total heat content (temperature and
+  moisture), then estimates what letting the outdoor air in would cost or
+  save with your own equipment (air conditioner or dehumidifier).
+
+  Enter the inside and outside conditions, pick your equipment, and read the
+  verdict. Inputs are saved in localStorage.
+
+  Open this file with #test at the end of the URL to run the built-in
+  self-test and show the results on the page.
+-->
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Should I open the windows?</title>
 <style>
@@ -44,6 +58,10 @@
   .seg button:focus-visible, .btn:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
   .btn { border: 1px solid var(--rule); background: var(--panel); border-radius: 8px; padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer; color: var(--ink); }
   .btn:hover { border-color: var(--ink-soft); }
+
+  #test-report { position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 10; max-height: 40vh; overflow: auto; padding: 10px 14px; border: 1px solid; border-radius: 8px; font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; }
+  #test-report.pass { background: var(--win-bg); color: var(--win); }
+  #test-report.fail { background: var(--lose-bg); color: var(--lose); }
 
   .grid { display: grid; grid-template-columns: minmax(300px, 400px) 1fr; gap: 18px; align-items: start; }
   @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
@@ -624,7 +642,7 @@ function drawChart(r) {
 function hIP(tF, W) { return 0.240 * tF + W * (1061 + 0.444 * tF); } // Btu/lb, 0°F reference (ASHRAE IP)
 function mix(a, b, t) { return 'rgb(' + Math.round(a[0] + (b[0] - a[0]) * t) + ',' + Math.round(a[1] + (b[1] - a[1]) * t) + ',' + Math.round(a[2] + (b[2] - a[2]) * t) + ')'; }
 
-/* ===================== SELF TEST (console only) ===================== */
+/* ===================== SELF TEST (runs only with #test) ===================== */
 function selfTest() {
   var fails = [], n = 0;
   function ok(cond, name, detail) { n++; if (!cond) fails.push(name + (detail !== undefined ? ' — got ' + detail : '')); }
@@ -690,11 +708,24 @@ function selfTest() {
   } catch (e) { fails.push('exception during self-test: ' + (e && e.message)); }
   if (fails.length) { console.error('[window-calc] self-test: ' + fails.length + ' of ' + n + ' checks FAILED'); fails.forEach(function (f) { console.error('  ✗ ' + f); }); }
   else console.info('[window-calc] self-test: all ' + n + ' checks passed');
-  return fails.length === 0;
+  return { total: n, failures: fails };
+}
+
+// Test contract shared with tools/: set window.portaTestResult before load, then show the result on the page.
+function runTestsIfRequested() {
+  if (location.hash !== '#test') return;
+  var r = window.portaTestResult = selfTest();
+  var el = $('test-report');
+  if (!el) { el = document.createElement('div'); el.id = 'test-report'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
+  el.className = r.failures.length ? 'fail' : 'pass';
+  el.textContent = r.failures.length
+    ? 'Self-test: ' + r.failures.length + ' of ' + r.total + ' checks FAILED\n' + r.failures.map(function (f) { return '\u2717 ' + f; }).join('\n')
+    : 'Self-test: all ' + r.total + ' checks passed';
 }
 
 /* ===================== BOOT ===================== */
-setupInputs(); syncInputs(); save(); render(); selfTest();
+setupInputs(); syncInputs(); save(); render(); runTestsIfRequested();
+window.addEventListener('hashchange', runTestsIfRequested);
 </script>
 </body>
 </html>
