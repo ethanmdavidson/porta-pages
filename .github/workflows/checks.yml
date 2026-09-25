@@ -5,9 +5,16 @@ on:
     branches: [main]
   pull_request:
 
+# A new push to a pull request cancels its run that is still going. Pushes to main get a group of their own
+# (head_ref is empty for them), so every one of them runs to the end.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: tools
@@ -19,5 +26,6 @@ jobs:
           cache: npm
           cache-dependency-path: tools/package-lock.json
       - run: npm ci
-      - run: npx playwright install --with-deps chromium firefox webkit
+      # Headless Chromium runs on the headless shell, so the full Chrome build isn't needed.
+      - run: npx playwright install --with-deps --only-shell chromium firefox webkit
       - run: npm test
