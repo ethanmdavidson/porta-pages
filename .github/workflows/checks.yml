@@ -26,6 +26,10 @@ jobs:
           cache: npm
           cache-dependency-path: tools/package-lock.json
       - run: npm ci
+      # Download the browsers while apt installs their system libraries, instead of one after the other.
       # Headless Chromium runs on the headless shell, so the full Chrome build isn't needed.
-      - run: npx playwright install --with-deps --only-shell chromium firefox webkit
+      - run: |
+          npx playwright install --only-shell chromium firefox webkit &
+          npx playwright install-deps chromium firefox webkit
+          wait $!
       - run: npm test
