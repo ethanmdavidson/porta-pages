@@ -1,14 +1,17 @@
 name: checks
 
+# Pull requests only, and only when they change something the checks look at. A merge to main runs nothing,
+# because the pull request's run already checked it.
 on:
-  push:
-    branches: [main]
   pull_request:
+    paths:
+      - '*.html'
+      - 'tools/**'
+      - '.github/workflows/checks.yml'
 
-# A new push to a pull request cancels its run that is still going. Pushes to main get a group of their own
-# (head_ref is empty for them), so every one of them runs to the end.
+# A new push to a pull request cancels its run that is still going.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -22,7 +25,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 26
+          # Use a version the runner image already has, so it isn't downloaded on every run. Both ubuntu-24.04
+          # and ubuntu-26.04 have 22 and 24. Check again when ubuntu-latest moves to a new image.
+          node-version: 24
           cache: npm
           cache-dependency-path: tools/package-lock.json
       - run: npm ci
