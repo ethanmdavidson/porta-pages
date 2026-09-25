@@ -11,6 +11,10 @@
   fetched from jsDelivr, with unpkg as a fallback, and cached in
   localStorage. After that the page works offline. Append #src=https://.../
   to the URL to fetch from a different mirror.
+
+  Open this file with #test at the end of the URL to run the built-in
+  self-test of the classification, filtering and export logic and show the
+  results on the page. It uses made-up data and needs no network.
 -->
 <html lang="en">
 <head>
@@ -137,6 +141,10 @@
     thead th.v, td.v { display: none; }
     .hide-sm { display: none; }
   }
+  #test-report { position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 10; max-height: 40vh; overflow: auto; padding: 10px 14px; border: 1px solid; border-radius: 8px; font: 13px/1.4 var(--mono); white-space: pre-wrap; }
+  #test-report.pass { background: var(--ok-soft); color: var(--ok); }
+  #test-report.fail { background: var(--network-soft); color: var(--network); }
+
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
   @media print { .rail, .results-head .sort { display: none; } .layout { grid-template-columns: 1fr; } tr.detail { display: table-row !important; } }
 </style>
@@ -227,37 +235,15 @@
 <script>
 function boot(DATA) {
   const F = DATA.features, M = DATA.meta;
-  const TIERS = { high: "Widely available", low: "Newly available", limited: "Limited availability" };
-  const BUCKET_ORDER = ["ok", "caveat", "origin", "network", "permission", "n_a"];
   const $ = (s) => document.querySelector(s);
 
 
   // ---------- state (mirrored in location.hash so it survives reload and can be shared) ----------
-  const DEFAULT = { q: "", tiers: ["high"], buckets: ["ok"], floor: "", group: "", sort: "name", open: [] };
   let state = readHash();
 
-  function readHash() {
-    const s = structuredClone(DEFAULT);
-    try {
-      const p = new URLSearchParams(location.hash.slice(1));
-      if (!p.toString()) return s;
-      s.q = p.get("q") || "";
-      if (p.has("t")) s.tiers = p.get("t").split(",").filter(Boolean);
-      if (p.has("k")) s.buckets = p.get("k").split(",").filter(Boolean);
-      s.floor = p.get("d") || ""; s.group = p.get("g") || ""; s.sort = p.get("s") || "name";
-      s.open = p.has("o") ? p.get("o").split(",").filter(Boolean) : [];
-    } catch (e) {}
-    return s;
-  }
+  function readHash() { return parseHash(location.hash); }
   function writeHash() {
-    const p = new URLSearchParams();
-    if (srcOverride) p.set("src", srcOverride);
-    if (state.q) p.set("q", state.q);
-    p.set("t", state.tiers.join(",")); p.set("k", state.buckets.join(","));
-    if (state.floor) p.set("d", state.floor); if (state.group) p.set("g", state.group);
-    if (state.sort !== "name") p.set("s", state.sort);
-    if (state.open.length) p.set("o", state.open.join(","));
-    const h = "#" + p.toString();
+    const h = formatHash(state, srcOverride);
     if (location.hash !== h) { try { location.hash = h; } catch (e) {} }
   }
 
@@ -288,7 +274,7 @@ function boot(DATA) {
   groupSel.addEventListener("change", (e) => { state.group = e.target.value; update(); });
   $("#sort").addEventListener("change", (e) => { state.sort = e.target.value; update(); });
   $("#reset").addEventListener("click", reset); $("#reset2").addEventListener("click", reset);
-  function reset() { state = structuredClone(DEFAULT); update(); }
+  function reset() { state = structuredClone(DEFAULT_VIEW); update(); }
   window.addEventListener("hashchange", () => { state = readHash(); update(false); });
 
   // ---------- header bar (widely-available split by verdict) ----------
@@ -311,23 +297,6 @@ function boot(DATA) {
   // ---------- filtering & rendering ----------
   const rowsEl = $("#rows"), emptyEl = $("#empty"), countEl = $("#count");
   let current = [];
-  function filtered() {
-    const q = state.q.trim().toLowerCase();
-    return F.filter((f) => {
-      if (!state.tiers.includes(f.b)) return false;
-      if (!state.buckets.includes(f.k)) return false;
-      if (state.group && !f.g.includes(state.group)) return false;
-      if (state.floor && (!f.hi || f.hi > state.floor)) return false;
-      if (q && !(f.n.toLowerCase().includes(q) || f.id.includes(q) || f.d.toLowerCase().includes(q))) return false;
-      return true;
-    });
-  }
-  const sorters = {
-    name: (a, b) => a.n.localeCompare(b.n, "en", { sensitivity: "base" }),
-    hi: (a, b) => (a.hi || "9999").localeCompare(b.hi || "9999") || sorters.name(a, b),
-    "hi-desc": (a, b) => (b.hi || "0000").localeCompare(a.hi || "0000") || sorters.name(a, b),
-    k: (a, b) => BUCKET_ORDER.indexOf(a.k) - BUCKET_ORDER.indexOf(b.k) || sorters.name(a, b),
-  };
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const ver = (v) => (v ? esc(v) : '<span class="lo">–</span>');
 
@@ -339,7 +308,7 @@ function boot(DATA) {
     for (const b of bar.children) b.setAttribute("aria-pressed", String(state.tiers.includes("high") && state.buckets.includes(b.dataset.k)));
     for (const l of legend.children) l.setAttribute("aria-pressed", String(state.buckets.includes(l.dataset.k)));
 
-    current = filtered().sort(sorters[state.sort] || sorters.name);
+    current = filterFeatures(F, state).sort(SORTERS[state.sort] || SORTERS.name);
     countEl.textContent = `${current.length} of ${F.length} features`;
     emptyEl.hidden = current.length > 0;
 
@@ -381,12 +350,10 @@ function boot(DATA) {
   // ---------- export (the only cross-browser write path: <a download> with a blob: URL) ----------
   const csvA = $("#dl-csv"), jsonA = $("#dl-json"), status = $("#status");
   let urls = [];
-  const cols = ["id", "name", "baseline", "widely_available", "newly_available", "verdict", "note", "chrome", "firefox", "safari", "safari_ios", "groups", "spec"];
-  const rowOf = (f) => [f.id, f.n, f.b, f.hi, f.lo, f.k, f.note, f.v.ch, f.v.ff, f.v.sa, f.v.ios, f.g.join("|"), f.s];
   function refreshExports() {
     for (const u of urls) URL.revokeObjectURL(u); urls = [];
-    const csv = [cols.join(","), ...current.map((f) => rowOf(f).map((c) => '"' + String(c).replace(/"/g, '""') + '"').join(","))].join("\r\n");
-    const json = JSON.stringify({ meta: { webFeaturesVersion: M.webFeaturesVersion, generated: M.generated, filters: state }, features: current.map((f) => Object.fromEntries(cols.map((c, i) => [c, rowOf(f)[i]]))) }, null, 1);
+    const csv = toCsv(current);
+    const json = JSON.stringify({ meta: { webFeaturesVersion: M.webFeaturesVersion, generated: M.generated, filters: state }, features: current.map((f) => Object.fromEntries(EXPORT_COLS.map((c, i) => [c, exportRow(f)[i]]))) }, null, 1);
     const csvUrl = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
     const jsonUrl = URL.createObjectURL(new Blob([json], { type: "application/json" }));
     urls.push(csvUrl, jsonUrl); csvA.href = csvUrl; jsonA.href = jsonUrl;
@@ -414,6 +381,54 @@ const BUCKETS = {
   permission: "Needs permission or hardware",
   n_a: "Not applicable to a page",
 };
+const BUCKET_ORDER = ["ok", "caveat", "origin", "network", "permission", "n_a"];
+const TIERS = { high: "Widely available", low: "Newly available", limited: "Limited availability" };
+
+// ---------- view state <-> location.hash, filtering, sorting, export (pure, so the self-test can reach them) ----------
+const DEFAULT_VIEW = { q: "", tiers: ["high"], buckets: ["ok"], floor: "", group: "", sort: "name", open: [] };
+function parseHash(hash) {
+  const s = structuredClone(DEFAULT_VIEW);
+  try {
+    const p = new URLSearchParams(hash.slice(1));
+    if (!p.toString()) return s;
+    s.q = p.get("q") || "";
+    if (p.has("t")) s.tiers = p.get("t").split(",").filter(Boolean);
+    if (p.has("k")) s.buckets = p.get("k").split(",").filter(Boolean);
+    s.floor = p.get("d") || ""; s.group = p.get("g") || ""; s.sort = p.get("s") || "name";
+    s.open = p.has("o") ? p.get("o").split(",").filter(Boolean) : [];
+  } catch (e) {}
+  return s;
+}
+function formatHash(state, src) {
+  const p = new URLSearchParams();
+  if (src) p.set("src", src);
+  if (state.q) p.set("q", state.q);
+  p.set("t", state.tiers.join(",")); p.set("k", state.buckets.join(","));
+  if (state.floor) p.set("d", state.floor); if (state.group) p.set("g", state.group);
+  if (state.sort !== "name") p.set("s", state.sort);
+  if (state.open.length) p.set("o", state.open.join(","));
+  return "#" + p.toString();
+}
+function filterFeatures(F, state) {
+  const q = state.q.trim().toLowerCase();
+  return F.filter((f) => {
+    if (!state.tiers.includes(f.b)) return false;
+    if (!state.buckets.includes(f.k)) return false;
+    if (state.group && !f.g.includes(state.group)) return false;
+    if (state.floor && (!f.hi || f.hi > state.floor)) return false;
+    if (q && !(f.n.toLowerCase().includes(q) || f.id.includes(q) || f.d.toLowerCase().includes(q))) return false;
+    return true;
+  });
+}
+const SORTERS = {
+  name: (a, b) => a.n.localeCompare(b.n, "en", { sensitivity: "base" }),
+  hi: (a, b) => (a.hi || "9999").localeCompare(b.hi || "9999") || SORTERS.name(a, b),
+  "hi-desc": (a, b) => (b.hi || "0000").localeCompare(a.hi || "0000") || SORTERS.name(a, b),
+  k: (a, b) => BUCKET_ORDER.indexOf(a.k) - BUCKET_ORDER.indexOf(b.k) || SORTERS.name(a, b),
+};
+const EXPORT_COLS = ["id", "name", "baseline", "widely_available", "newly_available", "verdict", "note", "chrome", "firefox", "safari", "safari_ios", "groups", "spec"];
+const exportRow = (f) => [f.id, f.n, f.b, f.hi, f.lo, f.k, f.note, f.v.ch, f.v.ff, f.v.sa, f.v.ios, f.g.join("|"), f.s];
+const toCsv = (features) => [EXPORT_COLS.join(","), ...features.map((f) => exportRow(f).map((c) => '"' + String(c).replace(/"/g, '""') + '"').join(","))].join("\r\n");
 
 // Hand-curated offline verdicts. Group rules apply first; per-feature OVERRIDES win.
 // These are the report author's claims about file:// behavior, not part of web-features.
@@ -753,16 +768,16 @@ const MIRRORS = ["https://cdn.jsdelivr.net/npm/web-features@3/", "https://unpkg.
 const srcOverride = new URLSearchParams(location.hash.slice(1)).get("src");
 const mirrors = srcOverride ? [srcOverride.endsWith("/") ? srcOverride : srcOverride + "/"] : MIRRORS;
 
-function readCache() { try { const c = JSON.parse(localStorage.getItem(CACHE_KEY)); return c && c.features && c.meta ? c : null; } catch (e) { return null; } }
-function writeCache(payload) { try { localStorage.setItem(CACHE_KEY, JSON.stringify(payload)); return true; } catch (e) { return false; } } // QuotaExceeded / private mode
+function readCache(key = CACHE_KEY) { try { const c = JSON.parse(localStorage.getItem(key)); return c && c.features && c.meta ? c : null; } catch (e) { return null; } }
+function writeCache(payload, key = CACHE_KEY) { try { localStorage.setItem(key, JSON.stringify(payload)); return true; } catch (e) { return false; } } // QuotaExceeded / private mode
 
-async function fetchDataset() {
+async function fetchDataset(bases = mirrors, get = fetch) {
   let lastErr;
-  for (const base of mirrors) {
+  for (const base of bases) {
     try {
       const [pkg, data] = await Promise.all([
-        fetch(base + "package.json", { cache: "no-cache" }).then((r) => { if (!r.ok) throw new Error(r.status + " " + r.statusText); return r.json(); }),
-        fetch(base + "data.json").then((r) => { if (!r.ok) throw new Error(r.status + " " + r.statusText); return r.json(); }),
+        get(base + "package.json", { cache: "no-cache" }).then((r) => { if (!r.ok) throw new Error(r.status + " " + r.statusText); return r.json(); }),
+        get(base + "data.json").then((r) => { if (!r.ok) throw new Error(r.status + " " + r.statusText); return r.json(); }),
       ]);
       if (!data.features || !data.groups) throw new Error("Unexpected data shape from " + base);
       return { payload: reduce(data, pkg.version), base };
@@ -810,6 +825,135 @@ document.getElementById("refresh").addEventListener("click", async () => {
   catch (e) { dstatus.textContent = "Could not reach the CDN: " + e.message; dstatus.classList.add("err"); }
 });
 document.getElementById("clearcache").addEventListener("click", () => { try { localStorage.removeItem(CACHE_KEY); } catch (e) {} location.reload(); });
+
+/* ======================= self-test (runs only with #test) ======================= */
+// Checks the classification, view-state and export logic on a small made-up dataset, and the mirror
+// fallback against a fake fetch. It needs no network and leaves the cached dataset alone.
+async function selfTest() {
+  const fails = [];
+  let n = 0;
+  const ok = (cond, name, detail) => { n++; if (!cond) fails.push(name + (detail !== undefined ? " — got " + detail : "")); };
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const eq = (a, b, name) => ok(same(a, b), name, JSON.stringify(a));
+  try {
+    // the hand-curated tables only use known verdicts, and every verdict has a color
+    ok(same([...BUCKET_ORDER].sort(), Object.keys(BUCKETS).sort()), "BUCKET_ORDER lists every verdict once");
+    for (const [table, rules] of [["GROUP_RULES", GROUP_RULES], ["OVERRIDES", OVERRIDES]]) {
+      const bad = Object.entries(rules).filter(([, r]) => !Array.isArray(r) || r.length !== 2 || !BUCKETS[r[0]] || typeof r[1] !== "string").map(([id]) => id);
+      eq(bad, [], table + ": every entry is [known verdict, note]");
+    }
+    const css = getComputedStyle(document.documentElement);
+    for (const k of BUCKET_ORDER) ok(css.getPropertyValue("--" + k).trim() && css.getPropertyValue("--" + k + "-soft").trim(), "verdict " + k + " has --" + k + " and --" + k + "-soft colors");
+
+    // reduce(): keeps features only, maps baseline tiers, applies group rules then overrides, sorts by name
+    const data = {
+      groups: { css: { name: "CSS" }, fetch: { name: "Fetch" }, cookies: { name: "Cookies" } },
+      features: {
+        zeta: { kind: "feature", name: "Zeta", description: "Last by name", group: "css", spec: ["https://example.test/zeta", "https://example.test/other"], caniuse: ["zeta"],
+          status: { baseline: "high", baseline_low_date: "2017-07-01", baseline_high_date: "2020-01-01", support: { chrome: "60", firefox: "55", safari: "11", safari_ios: "11.3" } } },
+        "fetch-thing": { kind: "feature", name: "alpha fetch", group: ["fetch"], status: { baseline: "low", baseline_low_date: "2024-01-01", support: {} } },
+        localstorage: { kind: "feature", name: "Local storage", description: "Key-value store", group: ["cookies"], status: { baseline: "high", baseline_high_date: "2015-07-29" } },
+        nostatus: { kind: "feature", name: "Beta" },
+        "moved-away": { kind: "moved", redirect_target: "zeta" },
+        "split-up": { kind: "split", redirect_targets: ["zeta", "nostatus"] },
+      },
+    };
+    const R = reduce(data, "3.1.4"), byId = Object.fromEntries(R.features.map((f) => [f.id, f]));
+    eq(R.features.map((f) => f.id), ["fetch-thing", "nostatus", "localstorage", "zeta"], "reduce: drops moved/split entries and sorts by name, ignoring case");
+    eq(byId.zeta, { id: "zeta", n: "Zeta", d: "Last by name", g: ["css"], s: "https://example.test/zeta", c: "zeta", b: "high", lo: "2017-07-01", hi: "2020-01-01",
+      v: { ch: "60", ff: "55", sa: "11", ios: "11.3" }, k: "ok", note: "", src: "default" }, "reduce: a feature no rule matches keeps every field and defaults to ok");
+    eq([byId["fetch-thing"].b, byId["fetch-thing"].k, byId["fetch-thing"].src, byId["fetch-thing"].note], ["low", "network", "group:fetch", GROUP_RULES.fetch[1]], "reduce: a group rule sets the verdict");
+    eq([byId.localstorage.k, byId.localstorage.src, byId.localstorage.note], ["caveat", "override", OVERRIDES.localstorage[1]], "reduce: an override beats its group rule");
+    eq(byId.nostatus, { id: "nostatus", n: "Beta", d: "", g: [], s: "", c: "", b: "limited", lo: "", hi: "", v: { ch: "", ff: "", sa: "", ios: "" }, k: "ok", note: "", src: "default" },
+      "reduce: a feature with no status, group, spec or caniuse is limited with empty fields");
+    eq([R.meta.webFeaturesVersion, R.meta.buckets, R.meta.groups], ["3.1.4", BUCKETS, { css: "CSS", fetch: "Fetch", cookies: "Cookies" }], "reduce: meta carries the version, verdict names and group names");
+    ok(/^\d{4}-\d{2}-\d{2}$/.test(R.meta.generated), "reduce: meta.generated is a date", R.meta.generated);
+    eq(reduce({ features: {} }, "3.0.0").meta.groups, {}, "reduce: a dataset without groups gives no group names");
+
+    // view state survives a trip through the URL hash
+    eq(parseHash(""), DEFAULT_VIEW, "hash: empty gives the default view");
+    eq(parseHash("#test"), DEFAULT_VIEW, "hash: #test gives the default view");
+    eq(formatHash(DEFAULT_VIEW), "#t=high&k=ok", "hash: the default view has a short hash");
+    const views = [
+      { ...DEFAULT_VIEW, q: "a&b=c, #d %", tiers: ["high", "low"], buckets: ["ok", "caveat"], floor: "2023-01-01", group: "css", sort: "k", open: ["zeta", "fetch-thing"] },
+      { ...DEFAULT_VIEW, tiers: [], buckets: [] },
+    ];
+    for (const v of views) eq(parseHash(formatHash(v)), v, "hash: round trip of " + JSON.stringify(v));
+    ok(formatHash(DEFAULT_VIEW, "https://mirror.test/wf/").startsWith("#src=https"), "hash: a mirror override stays in the hash");
+    eq(parseHash(formatHash(DEFAULT_VIEW, "https://mirror.test/wf/")), DEFAULT_VIEW, "hash: a mirror override is not part of the view");
+
+    // filtering and sorting
+    const F = R.features, view = (over) => ({ ...DEFAULT_VIEW, ...over }), ids = (fs) => fs.map((f) => f.id);
+    const all = { tiers: ["high", "low", "limited"], buckets: BUCKET_ORDER };
+    eq(ids(filterFeatures(F, DEFAULT_VIEW)), ["zeta"], "filter: the default view is widely available and always available");
+    eq(ids(filterFeatures(F, view(all))).length, 4, "filter: every tier and verdict shows everything");
+    eq(ids(filterFeatures(F, view({ ...all, q: "  FETCH " }))), ["fetch-thing"], "filter: search trims and ignores case in names");
+    eq(ids(filterFeatures(F, view({ ...all, q: "nostatus" }))), ["nostatus"], "filter: search matches ids");
+    eq(ids(filterFeatures(F, view({ ...all, q: "key-value" }))), ["localstorage"], "filter: search matches descriptions");
+    eq(ids(filterFeatures(F, view({ ...all, group: "css" }))), ["zeta"], "filter: by group");
+    eq(ids(filterFeatures(F, view({ ...all, floor: "2020-01-01" }))), ["localstorage", "zeta"], "filter: the date floor includes its own day and drops undated features");
+    eq(ids(filterFeatures(F, view({ ...all, floor: "2019-12-31" }))), ["localstorage"], "filter: the date floor drops later features");
+    const sorted = (key) => ids([...F].reverse().sort(SORTERS[key]));
+    eq(sorted("name"), ["fetch-thing", "nostatus", "localstorage", "zeta"], "sort: by name");
+    eq(sorted("hi"), ["localstorage", "zeta", "fetch-thing", "nostatus"], "sort: oldest first, undated last by name");
+    eq(sorted("hi-desc"), ["zeta", "localstorage", "fetch-thing", "nostatus"], "sort: newest first, undated last by name");
+    eq(sorted("k"), ["nostatus", "zeta", "localstorage", "fetch-thing"], "sort: by verdict, then name");
+
+    // CSV export quotes every cell
+    eq(toCsv([]), EXPORT_COLS.join(","), "csv: no rows gives just the header");
+    const csv = toCsv([{ ...byId.zeta, n: 'Say "hi", ok', g: ["css", "fetch"], note: "two\nlines" }]).split("\r\n");
+    ok(csv.length === 2 && csv[1].startsWith('"zeta","Say ""hi"", ok","high"'), "csv: quotes are doubled and commas stay inside a cell", csv[1]);
+    ok(csv[1].includes('"css|fetch"') && csv[1].includes('"two\nlines"'), "csv: groups are joined with | and newlines stay inside a cell", csv[1]);
+
+    // local copy: a round trip under a separate key, and junk is refused
+    const key = CACHE_KEY + ":selftest";
+    if (writeCache(R, key)) {
+      eq(readCache(key), R, "cache: round trip");
+      localStorage.setItem(key, "{not json"); ok(readCache(key) === null, "cache: unreadable JSON is ignored");
+      localStorage.setItem(key, JSON.stringify({ features: [] })); ok(readCache(key) === null, "cache: an entry without meta is ignored");
+      localStorage.removeItem(key);
+    } else console.info("[web-features] localStorage unavailable in this context; the dataset will not be cached.");
+
+    // mirrors: fall back on HTTP errors, network errors and bad data; report the last error
+    const pkg = { version: "3.9.9" };
+    const fakeFetch = (routes, log) => async (url) => {
+      log.push(url);
+      const r = routes[url];
+      if (r instanceof Error) throw r;
+      return r ? { ok: true, status: 200, statusText: "OK", json: async () => r } : { ok: false, status: 404, statusText: "Not Found", json: async () => ({}) };
+    };
+    const good = (base) => ({ [base + "package.json"]: pkg, [base + "data.json"]: data });
+    let log = [], got = await fetchDataset(["https://a.test/", "https://b.test/"], fakeFetch(good("https://b.test/"), log));
+    eq([got.base, got.payload.meta.webFeaturesVersion, got.payload.features.length], ["https://b.test/", "3.9.9", 4], "fetch: a 404 falls back to the next mirror");
+    log = []; got = await fetchDataset(["https://a.test/", "https://b.test/"], fakeFetch({ ...good("https://a.test/"), ...good("https://b.test/") }, log));
+    ok(got.base === "https://a.test/" && log.every((u) => u.startsWith("https://a.test/")), "fetch: the first working mirror wins", JSON.stringify(log));
+    got = await fetchDataset(["https://a.test/", "https://b.test/"], fakeFetch({ "https://a.test/package.json": new TypeError("Failed to fetch"), ...good("https://b.test/") }, []));
+    ok(got.base === "https://b.test/", "fetch: a network error falls back to the next mirror", got.base);
+    got = await fetchDataset(["https://a.test/", "https://b.test/"], fakeFetch({ "https://a.test/package.json": pkg, "https://a.test/data.json": { features: {} }, ...good("https://b.test/") }, []));
+    ok(got.base === "https://b.test/", "fetch: data without groups falls back to the next mirror", got.base);
+    const failure = (bases, routes) => fetchDataset(bases, fakeFetch(routes, [])).then(() => "no error", (e) => e.message);
+    eq(await failure(["https://a.test/", "https://b.test/"], { "https://a.test/package.json": new TypeError("Failed to fetch") }), "404 Not Found", "fetch: when every mirror fails, the last error is reported");
+    eq(await failure([], {}), "No mirror configured", "fetch: no mirrors is an error");
+  } catch (e) { fails.push("exception during self-test: " + (e && e.message)); }
+  return { total: n, failures: fails };
+}
+// Test contract shared with tools/: set window.portaTestResult before load, then show the result on the page.
+// It must run before main(): boot() rewrites the hash, so #test is gone once the dataset is shown.
+function runTestsIfRequested() {
+  if (location.hash !== "#test") return;
+  window.portaTestResult = selfTest().then((r) => {
+    let el = document.getElementById("test-report");
+    if (!el) { el = document.createElement("div"); el.id = "test-report"; el.setAttribute("role", "status"); document.body.appendChild(el); }
+    el.className = r.failures.length ? "fail" : "pass";
+    el.textContent = r.failures.length
+      ? "Self-test: " + r.failures.length + " of " + r.total + " checks FAILED\n" + r.failures.map((f) => "\u2717 " + f).join("\n")
+      : "Self-test: all " + r.total + " checks passed";
+    if (r.failures.length) console.error("[web-features] self-test: " + r.failures.length + " of " + r.total + " checks failed");
+    return r;
+  });
+}
+runTestsIfRequested();
+window.addEventListener("hashchange", runTestsIfRequested);
 main();
 </script>
 </body>
