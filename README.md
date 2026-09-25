@@ -27,8 +27,9 @@ Every `.html` file at the repo root is treated as an app and must:
 - declare a `<meta http-equiv="Content-Security-Policy">` with `default-src 'none'` before any `<script>` or `<style>`, so the browser itself blocks anything that isn't inline (loosen only the directives an app truly needs, like `connect-src` in the web-features report)
 - load no external scripts or stylesheets
 - use LF line endings, no trailing whitespace, and end with a newline
+- have a self-test that runs only when the URL ends in `#test` (see below)
 
-An app can also have a self-test that runs only when the URL ends in `#test`. When it does, it must set `window.portaTestResult = { total, failures }` (a number and an array of failure messages, or a Promise of that object) before the page's `load` event, and should show the result on the page. See `runTestsIfRequested()` in [window-calculator.html](window-calculator.html).
+The self-test must set `window.portaTestResult = { total, failures }` (a number and an array of failure messages, or a Promise of that object) before the page's `load` event, and should show the result on the page. See `runTestsIfRequested()` in [window-calculator.html](window-calculator.html).
 
 ### Checks
 
@@ -41,4 +42,4 @@ npx playwright install    # downloads Chromium, Firefox and WebKit, once
 npm test                  # or: npm run test:chromium
 ```
 
-This checks the conventions above against each file's source, then opens each app in Chromium, Firefox and WebKit and fails on uncaught errors, `console.error` output, CSP violations, unexpected network requests, or a failing `#test` self-test. The same checks run in CI on every pull request. To see an app's self-test by hand, open it with `#test` at the end of the URL.
+This checks each app's source against the conventions above, then loads it in Chromium, Firefox and WebKit to make sure it runs cleanly and passes its `#test` self-test. The same checks run in CI on every pull request. To see an app's self-test by hand, open it with `#test` at the end of the URL.

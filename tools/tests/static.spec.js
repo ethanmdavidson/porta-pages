@@ -1,5 +1,4 @@
 // Repo conventions checked against each app's source. See "Conventions" in the README.
-const fs = require('node:fs');
 const { test, expect } = require('@playwright/test');
 const { apps } = require('./apps');
 
@@ -11,9 +10,13 @@ function markupOnly(src) {
     .replace(/(<style\b[^>]*>)[\s\S]*?<\/style>/gi, '$1</style>');
 }
 
+function scriptBodies(src) {
+  return [...src.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].map((m) => m[1]).join('\n');
+}
+
 for (const app of apps) {
   test.describe(app.name, () => {
-    const src = fs.readFileSync(app.file, 'utf8');
+    const src = app.src;
     const markup = markupOnly(src);
 
     test('starts with a header comment describing the app', () => {
@@ -40,6 +43,14 @@ for (const app of apps) {
       const trailing = src.split('\n').map((l, i) => [i + 1, l]).filter(([, l]) => /[ \t]$/.test(l)).map(([n]) => n);
       expect(trailing, 'lines with trailing whitespace').toEqual([]);
       expect(src.endsWith('\n'), 'missing final newline').toBe(true);
+    });
+
+    // Only the shape can be checked here. pages.spec.js runs the self-test and checks the result it produces.
+    test('has a #test self-test that sets window.portaTestResult', () => {
+      const js = scriptBodies(src);
+      // Booleans, so a failure prints the message rather than every script in the file.
+      expect(/\bwindow\.portaTestResult\s*=(?!=)/.test(js), 'a self-test must assign window.portaTestResult in an inline script').toBe(true);
+      expect(/\blocation\.hash\s*[!=]==?\s*(["'])#test\1/.test(js), "a self-test must run only when location.hash is '#test'").toBe(true);
     });
   });
 }
