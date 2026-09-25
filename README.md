@@ -42,4 +42,4 @@ npx playwright install    # downloads Chromium, Firefox and WebKit, once
 npm test                  # or: npm run test:chromium
 ```
 
-This checks each app's source against the conventions above, then loads it in Chromium, Firefox and WebKit to make sure it runs cleanly and passes its `#test` self-test. The same checks run in CI on every pull request. To see an app's self-test by hand, open it with `#test` at the end of the URL.
+This checks each app's source against the conventions above, then loads it in Chromium, Firefox and WebKit to make sure it runs cleanly and passes its `#test` self-test. The same checks run in CI. To see an app's self-test by hand, open it with `#test` at the end of the URL.
