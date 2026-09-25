@@ -7,6 +7,9 @@ const ROOT = path.resolve(__dirname, '..', '..');
 const apps = fs.readdirSync(ROOT)
   .filter((f) => f.endsWith('.html'))
   .sort()
-  .map((name) => ({ name, file: path.join(ROOT, name) }));
+  .map((name) => {
+    const file = path.join(ROOT, name);
+    return { name, file, src: fs.readFileSync(file, 'utf8') };
+  });
 
 module.exports = { ROOT, apps };
