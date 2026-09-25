@@ -41,4 +41,4 @@ npx playwright install    # downloads Chromium, Firefox and WebKit, once
 npm test                  # or: npm run test:chromium
 ```
 
-This checks the conventions above against each file's source, then opens each app in Chromium, Firefox and WebKit and fails on uncaught errors, `console.error` output, CSP violations, unexpected network requests, or a failing `#test` self-test. The same checks run in CI on every pull request. To see an app's self-test by hand, open it with `#test` at the end of the URL.
+This checks the conventions above against each file's source, then opens each app in Chromium, Firefox and WebKit and fails on uncaught errors, `console.error` output, CSP violations, unexpected network requests, or a failing `#test` self-test. An app counts as having a self-test if its source mentions `#test` or `portaTestResult`. Its source must then compare `location.hash` to `'#test'` and assign `window.portaTestResult`, and if the running page never sets `window.portaTestResult` the check fails instead of skipping. The same checks run in CI on every pull request. To see an app's self-test by hand, open it with `#test` at the end of the URL.

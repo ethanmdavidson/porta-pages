@@ -46,9 +46,9 @@ for (const app of apps) {
     });
 
     test('passes its self-test (#test)', async ({ page }) => {
+      test.skip(!app.hasSelfTest, 'no self-test: the source never mentions #test or portaTestResult');
       const problems = await open(page, app, '#test');
       const result = await page.evaluate(() => window.portaTestResult);
-      test.skip(result === undefined && problems.length === 0, 'no self-test: the app does not set window.portaTestResult');
       expect(problems).toEqual([]);
       expect(result, 'window.portaTestResult was not set').toBeDefined();
       expect(result.failures).toEqual([]);
