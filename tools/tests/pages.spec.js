@@ -1,4 +1,4 @@
-// Loads each app in a real browser and checks that it runs cleanly, then runs its self-test if it has one.
+// Loads each app in a real browser and checks that it runs cleanly, then runs its self-test.
 const { pathToFileURL } = require('node:url');
 const { test, expect } = require('@playwright/test');
 const { apps } = require('./apps');
@@ -43,10 +43,11 @@ for (const app of apps) {
     test('loads without errors', async ({ page }) => {
       const problems = await open(page, app);
       expect(problems).toEqual([]);
+      const hasResult = await page.evaluate(() => 'portaTestResult' in window);
+      expect(hasResult, 'the self-test must run only when the URL ends in #test').toBe(false);
     });
 
     test('passes its self-test (#test)', async ({ page }) => {
-      test.skip(!app.hasSelfTest, 'no self-test: the source never mentions #test or portaTestResult');
       const problems = await open(page, app, '#test');
       const result = await page.evaluate(() => window.portaTestResult);
       expect(problems).toEqual([]);

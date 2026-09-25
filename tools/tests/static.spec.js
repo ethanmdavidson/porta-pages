@@ -46,8 +46,7 @@ for (const app of apps) {
     });
 
     // Only the shape can be checked here. pages.spec.js runs the self-test and checks the result it produces.
-    test('follows the self-test contract, if it has a self-test', () => {
-      test.skip(!app.hasSelfTest, 'no self-test: the source never mentions #test or portaTestResult');
+    test('has a #test self-test that sets window.portaTestResult', () => {
       const js = scriptBodies(src);
       // Booleans, so a failure prints the message rather than every script in the file.
       expect(/\bwindow\.portaTestResult\s*=(?!=)/.test(js), 'a self-test must assign window.portaTestResult in an inline script').toBe(true);
