@@ -11,7 +11,7 @@ The apps are
 
 ## How to use
 
-Open [ethanmdavidson.github.io/porta-pages](https://ethanmdavidson.github.io/porta-pages/) and pick an app, or download any of the `.html` files and open it in your browser.
+Open [porta-pages.pages.dev](https://porta-pages.pages.dev/) and pick an app, or download any of the `.html` files and open it in your browser.
 
 Each file is also its own README: it should have a comment block at the top that describes what it is and how to use it.
 
@@ -47,4 +47,4 @@ This checks each app's source against the conventions above, then loads it in Ch
 
 ### Publishing
 
-Merging a change to a root `.html` file into `main` publishes every root `.html` file to GitHub Pages (see [.github/workflows/pages.yml](.github/workflows/pages.yml)).
+Merging a change to a root `.html` file into `main` publishes every root `.html` file to the `porta-pages` project on Cloudflare Pages, and a pull request that changes one gets a preview deployment linked from the pull request (see [.github/workflows/pages.yml](.github/workflows/pages.yml)). The workflow needs the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` repository secrets. It pins the Wrangler version, which Dependabot doesn't update, so bump `wranglerVersion` by hand now and then.
