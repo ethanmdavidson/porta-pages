@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<!--
+  porta-pages
+
+  The index of the porta-pages apps: a list with a link to each one. Every
+  app is a single self-contained HTML file, so you can also save any of
+  them and open it from disk, offline.
+
+  When adding an app, add it to the list here too. The checks in tools/
+  fail if the list and the apps in the repo don't match.
+
+  Open this file with #test at the end of the URL to run the built-in
+  self-test of the list and show the results on the page.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>porta-pages</title>
+<meta name="description" content="Small apps that are each a single, self-contained HTML file.">
+<style>
+  :root {
+    --paper: #f5f6f4; --panel: #ffffff; --ink: #1c2733; --ink-2: #4a5561; --rule: #d5dad6;
+    --link: #2b5c8a; --pass-bg: #e3f2e9; --pass: #1f6b43; --fail-bg: #f8e3e3; --fail: #9b2c2c;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) { :root {
+    --paper: #151a20; --panel: #1d242c; --ink: #e6eaee; --ink-2: #b8c0c8; --rule: #2e363f;
+    --link: #7fb0dc; --pass-bg: #1e3a2d; --pass: #6cc49a; --fail-bg: #44262b; --fail: #e08a96;
+  } }
+  *, *::before, *::after { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main {
+    max-width: 40rem; margin: 0 auto;
+    padding: max(2rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) 2rem max(1rem, env(safe-area-inset-left));
+  }
+  h1 { margin: 0 0 0.25rem; font-size: 1.75rem; }
+  .lede { margin: 0 0 1.5rem; color: var(--ink-2); }
+  #apps { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.75rem; }
+  #apps a {
+    display: block; padding: 0.875rem 1rem; border: 1px solid var(--rule); border-radius: 8px;
+    background: var(--panel); color: inherit; text-decoration: none;
+  }
+  #apps a:hover, #apps a:focus-visible { border-color: var(--link); }
+  #apps a:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+  .name { display: block; font-weight: 600; color: var(--link); }
+  .desc { display: block; margin-top: 0.125rem; color: var(--ink-2); font-size: 0.9375rem; }
+  footer { margin-top: 2rem; font-size: 0.875rem; color: var(--ink-2); }
+  footer a { color: var(--link); }
+  #test-report { position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 10; max-height: 40vh; overflow: auto; padding: 10px 14px; border: 1px solid; border-radius: 8px; font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; }
+  #test-report.pass { background: var(--pass-bg); color: var(--pass); }
+  #test-report.fail { background: var(--fail-bg); color: var(--fail); }
+</style>
+</head>
+<body>
+<main>
+  <h1>porta-pages</h1>
+  <p class="lede">Small apps that are each a single, self-contained HTML file. Use them here, or save one and open it from disk, offline.</p>
+  <ul id="apps">
+    <li><a href="girih.html">
+      <span class="name">Girih</span>
+      <span class="desc">A tile-laying puzzle built on the five girih tiles of Persian strapwork.</span>
+    </a></li>
+    <li><a href="web-features-report.html">
+      <span class="name">Web features for a self-contained HTML file</span>
+      <span class="desc">Which web platform features can be relied on in a single HTML file opened from disk. Needs a network connection on the first visit.</span>
+    </a></li>
+    <li><a href="window-calculator.html">
+      <span class="name">Should I open the windows?</span>
+      <span class="desc">Compares indoor and outdoor air by heat and moisture, and estimates what letting it in would cost or save with your air conditioner or dehumidifier.</span>
+    </a></li>
+  </ul>
+  <footer>Source and license: <a href="https://github.com/ethanmdavidson/porta-pages">github.com/ethanmdavidson/porta-pages</a></footer>
+</main>
+<script>
+/* ===================== SELF TEST (runs only with #test) ===================== */
+function selfTest() {
+  var fails = [], n = 0;
+  function ok(cond, name, detail) { n++; if (!cond) fails.push(name + (detail !== undefined ? ' — got ' + detail : '')); }
+  try {
+    var links = Array.prototype.slice.call(document.querySelectorAll('#apps > li > a'));
+    ok(links.length > 0, 'the list has at least one app');
+    ok(links.length === document.querySelectorAll('#apps > li').length, 'every list item is a link');
+    var seen = {};
+    links.forEach(function (a) {
+      var href = a.getAttribute('href') || '';
+      ok(/^[a-z0-9-]+\.html$/.test(href), href + ': href is a bare .html filename next to this page', JSON.stringify(href));
+      ok(href !== 'index.html', href + ': the index does not list itself');
+      ok(!seen[href], href + ': listed once'); seen[href] = true;
+      var name = a.querySelector('.name'), desc = a.querySelector('.desc');
+      ok(name && name.textContent.trim() !== '', href + ': has a name');
+      ok(desc && desc.textContent.trim() !== '', href + ': has a description');
+    });
+  } catch (e) { fails.push('exception during self-test: ' + (e && e.message)); }
+  if (fails.length) { console.error('[index] self-test: ' + fails.length + ' of ' + n + ' checks FAILED'); fails.forEach(function (f) { console.error('  ✗ ' + f); }); }
+  else console.info('[index] self-test: all ' + n + ' checks passed');
+  return { total: n, failures: fails };
+}
+
+// Test contract shared with tools/: set window.portaTestResult before load, then show the result on the page.
+function runTestsIfRequested() {
+  if (location.hash !== '#test') return;
+  var r = window.portaTestResult = selfTest();
+  var el = document.getElementById('test-report');
+  if (!el) { el = document.createElement('div'); el.id = 'test-report'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
+  el.className = r.failures.length ? 'fail' : 'pass';
+  el.textContent = r.failures.length
+    ? 'Self-test: ' + r.failures.length + ' of ' + r.total + ' checks FAILED\n' + r.failures.map(function (f) { return '✗ ' + f; }).join('\n')
+    : 'Self-test: all ' + r.total + ' checks passed';
+}
+
+runTestsIfRequested();
+window.addEventListener('hashchange', runTestsIfRequested);
+</script>
+</body>
+</html>

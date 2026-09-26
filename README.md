@@ -11,7 +11,7 @@ The apps are
 
 ## How to use
 
-Download the files and open them in your browser. They aren't hosted anywhere public yet.
+Open [ethanmdavidson.github.io/porta-pages](https://ethanmdavidson.github.io/porta-pages/) and pick an app, or download any of the `.html` files and open it in your browser.
 
 Each file is also its own README: it should have a comment block at the top that describes what it is and how to use it.
 
@@ -28,6 +28,7 @@ Every `.html` file at the repo root is treated as an app and must:
 - load no external scripts or stylesheets
 - use LF line endings, no trailing whitespace, and end with a newline
 - have a self-test that runs only when the URL ends in `#test` (see below)
+- be listed in [index.html](index.html), the site's front page, which is itself an app and follows these rules too
 
 The self-test must set `window.portaTestResult = { total, failures }` (a number and an array of failure messages, or a Promise of that object) before the page's `load` event, and should show the result on the page. See `runTestsIfRequested()` in [window-calculator.html](window-calculator.html).
 
@@ -43,3 +44,7 @@ npm test                  # or: npm run test:chromium
 ```
 
 This checks each app's source against the conventions above, then loads it in Chromium, Firefox and WebKit to make sure it runs cleanly and passes its `#test` self-test. The same checks run in CI. To see an app's self-test by hand, open it with `#test` at the end of the URL.
+
+### Publishing
+
+Merging a change to a root `.html` file into `main` publishes every root `.html` file to GitHub Pages (see [.github/workflows/pages.yml](.github/workflows/pages.yml)).
