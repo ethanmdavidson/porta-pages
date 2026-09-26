@@ -47,4 +47,4 @@ This checks each app's source against the conventions above, then loads it in Ch
 
 ### Publishing
 
-Merging a change to a root `.html` file into `main` publishes every root `.html` file to the `porta-pages` project on Cloudflare Pages, and a pull request that changes one gets a preview deployment linked from the pull request (see [.github/workflows/pages.yml](.github/workflows/pages.yml)). The workflow needs the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` repository secrets. It pins the Wrangler version, which Dependabot doesn't update, so bump `wranglerVersion` by hand now and then.
+Merging a change into `main` publishes to the `porta-pages` project on Cloudflare Pages, and a pull request gets a preview deployment (see [.github/workflows/pages.yml](.github/workflows/pages.yml)).

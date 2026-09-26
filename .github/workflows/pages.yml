@@ -2,7 +2,7 @@ name: pages
 
 # Publishes the apps to Cloudflare Pages (https://porta-pages.pages.dev/). A merge to main that changes one
 # deploys to production; a pull request that changes one gets a preview deployment with its own URL, linked from
-# the pull request and the job summary. Run it by hand from the Actions tab to redeploy a branch without a change.
+# the pull request and the job summary.
 on:
   push:
     branches: [main]
@@ -13,7 +13,6 @@ on:
     paths:
       - '*.html'
       - '.github/workflows/pages.yml'
-  workflow_dispatch:
 
 permissions:
   contents: read
