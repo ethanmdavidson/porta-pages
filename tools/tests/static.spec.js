@@ -54,3 +54,15 @@ for (const app of apps) {
     });
   });
 }
+
+// index.html is an app like the others, and it also links to every other app, so a new app can't be left off it.
+test('index.html links to every other app and nothing else in the repo', () => {
+  const index = apps.find((a) => a.name === 'index.html');
+  expect(index, 'expected an index.html at the repo root').toBeDefined();
+  // Relative links only: absolute ones (like the link to the repo) and in-page anchors aren't apps.
+  const hrefs = [...markupOnly(index.src).matchAll(/\bhref\s*=\s*(["'])(.*?)\1/gi)]
+    .map((m) => m[2])
+    .filter((h) => !/^([a-z][a-z0-9+.-]*:|\/|#)/i.test(h))
+    .sort();
+  expect(hrefs).toEqual(apps.map((a) => a.name).filter((n) => n !== 'index.html'));
+});
