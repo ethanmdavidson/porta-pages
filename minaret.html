@@ -1,0 +1,1282 @@
+<!DOCTYPE html>
+<!--
+  Minaret (prototype)
+
+  Girih tiles laid round a minaret. The band of tiles wraps all the way
+  round the tower: a tile that runs off one side comes back on the other,
+  so the pattern has to meet itself round the back. Build from the floor
+  up. The view follows the lowest gap still open, and tiles can go
+  anywhere below the scaffold line a few edge-lengths above it, so a gap
+  that no tile can ever fill holds the whole tower down. The game ends
+  when nothing more fits; the tower's height is how far up it is complete.
+
+  Tap a lit edge to try the current tile there, tap the same edge again to
+  turn it, then press Set. Drag sideways to turn the tower. A small ring
+  marks a joint that can only close with a 108° corner (a pentagon's, or a
+  rhombus's blunt one), and red marks a gap no tile can fill. When the
+  tower is finished, drag up and down to look it over.
+
+  Keyboard: left and right arrows choose an edge, up and down arrows or r
+  turn the tile, enter or space sets it, s sets it aside, [ and ] turn the
+  tower.
+
+  A prototype of a variant of girih.html, whose tile geometry it copies.
+  The tower in progress and the best height are saved in localStorage, so
+  closing the page and coming back offers to continue.
+
+  Open this file with #test at the end of the URL to run the built-in
+  self-test of the game logic and show the results on the page. The test
+  leaves the game and the saved game alone.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0f1226">
+<title>Minaret</title>
+<style>
+  :root {
+    --ground: #0f1226;
+    --panel: #171c38;
+    --ink: #efe3c4;
+    --ink-dim: #9aa2c2;
+    --gold: #d6a748;
+    --edge: #2a3357;
+    --sat: env(safe-area-inset-top, 0px);
+    --sab: env(safe-area-inset-bottom, 0px);
+    --sal: env(safe-area-inset-left, 0px);
+    --sar: env(safe-area-inset-right, 0px);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body {
+    background: var(--ground); color: var(--ink);
+    font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    overflow: hidden;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+  button { font-family: inherit; }
+  #app {
+    height: 100%; display: flex; flex-direction: column; gap: 8px;
+    padding: calc(var(--sat) + 8px) calc(var(--sar) + 12px) calc(var(--sab) + 8px) calc(var(--sal) + 12px);
+  }
+  header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+  header h1 { font-weight: 400; font-size: 26px; letter-spacing: 0.1em; color: var(--gold); }
+  #hud { display: flex; gap: 18px; font-size: 15px; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
+  #hud b { color: var(--ink); font-weight: 400; }
+  #msg { min-height: 1.3em; font-size: 14px; font-style: italic; color: var(--ink-dim); text-align: center; }
+
+  #stage { flex: 1; min-height: 0; display: flex; gap: 16px; }
+  #boardwrap { flex: 1; min-width: 0; min-height: 0; position: relative; }
+  canvas#board { display: block; width: 100%; height: 100%; touch-action: none; }
+
+  aside { width: 150px; flex: none; display: flex; flex-direction: column; gap: 14px; }
+  .hand { display: flex; flex-direction: column; gap: 4px; }
+  .hand .lbl { font-size: 14px; font-style: italic; color: var(--ink-dim); }
+  .hand canvas { display: block; background: var(--panel); border: 1px solid var(--edge); }
+  .nexts { display: flex; gap: 6px; }
+  .actions { display: flex; flex-direction: column; gap: 8px; }
+  .actions button {
+    padding: 12px 10px; border-radius: 3px;
+    border: 1px solid var(--edge); background: var(--panel); color: var(--ink);
+    font-size: 16px; cursor: pointer; touch-action: manipulation;
+  }
+  .actions button.primary { background: var(--gold); color: var(--ground); border-color: var(--gold); }
+  .actions button:disabled { opacity: 0.35; cursor: default; }
+  .actions button:active:not(:disabled) { filter: brightness(1.15); }
+  #hint { text-align: center; color: var(--ink-dim); font-size: 13px; font-style: italic; }
+  @media (pointer: coarse) { #hint { display: none; } }
+  #test-report { position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 10; max-height: 40vh; overflow: auto; padding: 10px 14px; border: 1px solid; background: var(--panel); font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; -webkit-user-select: text; user-select: text; }
+  #test-report.pass { color: #8fd19e; }
+  #test-report.fail { color: #f08a7a; }
+
+  @media (max-width: 640px), (orientation: portrait) {
+    #app { gap: 6px; }
+    header h1 { font-size: 22px; }
+    #hud { gap: 12px; font-size: 14px; }
+    #stage { flex-direction: column; gap: 6px; }
+    aside { width: auto; flex-direction: row; align-items: stretch; justify-content: space-between; gap: 10px; }
+    .hand { flex-direction: row; align-items: flex-end; gap: 6px; }
+    .hand .lbl { display: none; }
+    .nexts { gap: 4px; }
+    .actions { flex-direction: row; flex-wrap: wrap; flex: 1; justify-content: flex-end; gap: 6px; }
+    .actions button { padding: 0 10px; font-size: 15px; min-height: 44px; }
+  }
+
+  #overlay {
+    position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+    background: rgba(8, 11, 24, 0.8); padding: 16px;
+  }
+  #overlay.show { display: flex; }
+  .sheet {
+    width: 100%; max-width: 400px; max-height: 100%; overflow: auto;
+    background: var(--panel); border: 1px solid var(--edge); padding: 24px 24px 20px; text-align: center;
+  }
+  .sheet [data-view] { display: none; }
+  .sheet [data-view].on { display: block; }
+  .sheet h2 { font-weight: 400; font-size: 24px; color: var(--gold); letter-spacing: 0.08em; }
+  .sheet p { color: var(--ink-dim); font-size: 15px; line-height: 1.5; margin-top: 10px; }
+  .sheet .verdict { color: var(--ink); font-style: italic; }
+  #legend { display: flex; justify-content: center; gap: 6px; margin: 16px 0 4px; flex-wrap: wrap; }
+  #legend figure { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 12px; color: var(--ink-dim); width: 64px; }
+  #legend canvas { display: block; }
+  .sheet button {
+    margin: 18px 4px 0; padding: 12px 30px; background: var(--gold); color: var(--ground);
+    border: 0; border-radius: 3px; font-size: 17px; cursor: pointer;
+  }
+  .sheet button:focus-visible, .actions button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>Minaret</h1>
+    <div id="hud"><span>Height <b id="height">0.0</b></span><span id="limit-wrap" hidden>Limit <b id="limit">0.0</b></span><span>Best <b id="best">0.0</b></span></div>
+  </header>
+  <div id="msg"></div>
+
+  <div id="stage">
+    <div id="boardwrap"><canvas id="board"></canvas></div>
+    <aside>
+      <div class="hand">
+        <span class="lbl">This tile</span>
+        <canvas id="now"></canvas>
+        <span class="lbl">Then</span>
+        <div class="nexts"><canvas id="n1"></canvas><canvas id="n2"></canvas></div>
+      </div>
+      <div class="actions">
+        <button id="btn-turn" disabled>Turn</button>
+        <button id="btn-set" class="primary" disabled>Set</button>
+        <button id="btn-skip">Set aside <span id="skips">3</span></button>
+        <button id="btn-new" class="primary" hidden>New tower</button>
+      </div>
+    </aside>
+  </div>
+  <p id="hint">← → choose an edge, ↑ ↓ or R turn the tile, Enter or Space sets it, S sets it aside, [ ] turn the tower</p>
+
+  <div id="overlay" class="show">
+    <div class="sheet">
+      <div data-view="title" class="on">
+        <h2>Minaret</h2>
+        <p>The five girih tiles, laid round a minaret. The band wraps all the way round the tower, so a tile that runs off one side comes back on the other, and the pattern has to meet itself round the back.</p>
+        <div id="legend"></div>
+        <p>Build from the floor up. The view follows the lowest gap still open, and you can lay tiles anywhere below the scaffold line above it. A gap no tile can ever fill, marked red, holds the tower down: when nothing more fits, the tower's height is how far up it is complete.</p>
+        <p>A small ring marks a joint that can only close with a 108° corner, and only pentagons and rhombuses have one: those corners always meet in pairs. Drag sideways to turn the tower.</p>
+        <p id="new-warn" class="verdict" role="status" hidden>A new tower replaces your saved one. Press it again to confirm.</p>
+        <button id="btn-continue" hidden>Continue</button>
+        <button id="btn-start">Begin</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+var MINARET = (function () {
+  'use strict';
+  const DEG = Math.PI / 180;
+  const EPS = 1e-6;
+  const ROT = [];
+  for (let r = 0; r < 10; r++) ROT.push([Math.cos(r * 36 * DEG), Math.sin(r * 36 * DEG)]);
+  const rot = (p, r) => { const c = ROT[r][0], s = ROT[r][1]; return [p[0] * c - p[1] * s, p[0] * s + p[1] * c]; };
+  const add = (a, b) => [a[0] + b[0], a[1] + b[1]];
+  const sub = (a, b) => [a[0] - b[0], a[1] - b[1]];
+  const mul = (a, k) => [a[0] * k, a[1] * k];
+  const cross = (a, b) => a[0] * b[1] - a[1] * b[0];
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1];
+  const len = a => Math.hypot(a[0], a[1]);
+  const vkey = p => Math.round(p[0] * 1000) + ',' + Math.round(p[1] * 1000);
+
+  function polyArea(P) {
+    let a = 0;
+    for (let i = 0; i < P.length; i++) { const p = P[i], q = P[(i + 1) % P.length]; a += p[0] * q[1] - q[0] * p[1]; }
+    return a / 2;
+  }
+  function centroid(P) {
+    let A = 0, cx = 0, cy = 0;
+    for (let i = 0; i < P.length; i++) {
+      const p = P[i], q = P[(i + 1) % P.length], cr = p[0] * q[1] - q[0] * p[1];
+      A += cr; cx += (p[0] + q[0]) * cr; cy += (p[1] + q[1]) * cr;
+    }
+    A /= 2; return [cx / (6 * A), cy / (6 * A)];
+  }
+  function pointInPoly(P, pt) {
+    let inside = false;
+    for (let i = 0, j = P.length - 1; i < P.length; j = i++) {
+      const a = P[i], b = P[j];
+      if ((a[1] > pt[1]) !== (b[1] > pt[1]) && pt[0] < (b[0] - a[0]) * (pt[1] - a[1]) / (b[1] - a[1]) + a[0]) inside = !inside;
+    }
+    return inside;
+  }
+  function rayHit(o1, d1, o2, d2) {
+    const den = cross(d1, d2);
+    if (Math.abs(den) < EPS) return null;
+    const w = sub(o2, o1);
+    return [cross(w, d2) / den, cross(w, d1) / den];
+  }
+
+  // Girih strapwork, as in Lu & Steinhardt's tile set: from every edge midpoint
+  // two lines leave at 54° to the edge and each stops at its first crossing with
+  // another line (two lines meeting head-on count as a crossing). The decagon is
+  // the exception: its lines run through the first crossing and stop at the
+  // second, which gives the ten-fold rosette with the star-shaped centre.
+  function decorate(pts, skip) {
+    const n = pts.length, rays = [];
+    for (let i = 0; i < n; i++) {
+      const a = pts[i], b = pts[(i + 1) % n], m = mul(add(a, b), 0.5), d = sub(b, a);
+      const nrm = [-d[1], d[0]]; // inward normal for a counter-clockwise polygon
+      for (const s of [-1, 1]) {
+        const ang = s * 36 * DEG;
+        const dir = [nrm[0] * Math.cos(ang) - nrm[1] * Math.sin(ang), nrm[0] * Math.sin(ang) + nrm[1] * Math.cos(ang)];
+        rays.push({ edge: i, o: m, d: dir, passed: 0, stop: null });
+      }
+    }
+    const pairs = [];
+    for (let i = 0; i < rays.length; i++) for (let j = i + 1; j < rays.length; j++) {
+      const A = rays[i], B = rays[j];
+      if (A.edge === B.edge) continue;
+      const w = sub(B.o, A.o);
+      let t, u;
+      if (Math.abs(cross(A.d, B.d)) < EPS) {
+        // parallel: only a head-on, collinear pair meets, at the halfway point
+        if (dot(A.d, B.d) > 0 || Math.abs(cross(w, A.d)) > 1e-6 || dot(w, A.d) <= 0) continue;
+        t = u = len(w) / 2;
+      } else {
+        const h = rayHit(A.o, A.d, B.o, B.d);
+        t = h[0]; u = h[1];
+        if (t < 1e-6 || u < 1e-6) continue;
+        if (!pointInPoly(pts, add(A.o, mul(A.d, t)))) continue;
+      }
+      pairs.push({ i, j, t, u, m: Math.max(t, u) });
+    }
+    // Resolve nearest crossings first: a crossing only counts if both lines
+    // actually reach it. Each line passes through `skip` crossings, then stops.
+    pairs.sort((a, b) => a.m - b.m);
+    const alive = (r, t) => r.stop === null || Math.abs(r.stop - t) < 1e-6;
+    for (const q of pairs) {
+      const A = rays[q.i], B = rays[q.j];
+      if (!alive(A, q.t) || !alive(B, q.u)) continue;
+      if (A.stop === null) { if (A.passed < skip) A.passed++; else A.stop = q.t; }
+      if (B.stop === null) { if (B.passed < skip) B.passed++; else B.stop = q.u; }
+    }
+    return rays.map(r => ({ a: r.o, b: add(r.o, mul(r.d, r.stop === null ? 0 : r.stop)), ok: r.stop !== null }));
+  }
+
+  // Deal weights as in girih.html: hexagons and bowties do most of the work, decagons
+  // anchor the design, pentagons and rhombuses are occasional.
+  const DEFS = {
+    decagon:  { name: 'Decagon',           angles: [144, 144, 144, 144, 144, 144, 144, 144, 144, 144], weight: 2 },
+    hexagon:  { name: 'Elongated hexagon', angles: [72, 144, 144, 72, 144, 144], weight: 5 },
+    bowtie:   { name: 'Bowtie',            angles: [72, 72, 216, 72, 72, 216], weight: 3 },
+    pentagon: { name: 'Pentagon',          angles: [108, 108, 108, 108, 108], weight: 1 },
+    rhombus:  { name: 'Rhombus',           angles: [72, 108, 72, 108], weight: 1 },
+  };
+
+  function buildTile(id, def) {
+    const n = def.angles.length;
+    let pts = [], dirs = [], x = 0, y = 0, h = 0;
+    for (let i = 0; i < n; i++) {
+      pts.push([x, y]);
+      dirs.push(((Math.round(h / (36 * DEG)) % 10) + 10) % 10);
+      x += Math.cos(h); y += Math.sin(h);
+      h += (180 - def.angles[(i + 1) % n]) * DEG;
+    }
+    const c = centroid(pts);
+    pts = pts.map(p => sub(p, c));
+    const partIdx = id === 'bowtie' ? [[2, 3, 4, 5], [5, 0, 1, 2]] : [pts.map((_, i) => i)];
+    const parts = partIdx.map(ix => ix.map(i => pts[i]));
+    const deco = decorate(pts, id === 'decagon' ? 1 : 0).filter(s => s.ok);
+    const R = Math.max(...pts.map(len));
+    const rots = [];
+    for (let r = 0; r < 10; r++) {
+      const verts = pts.map(p => rot(p, r));
+      rots.push({
+        verts,
+        mids: verts.map((a, i) => mul(add(a, verts[(i + 1) % n]), 0.5)),
+        parts: parts.map(pp => pp.map(p => rot(p, r))),
+        deco: deco.map(s => [rot(s.a, r), rot(s.b, r)]),
+        dirs: dirs.map(d => (d + r) % 10),
+        bbox: bboxOf(verts),
+      });
+    }
+    const tile = { id, name: def.name, weight: def.weight, n, angles: def.angles, area: polyArea(pts), R, rots };
+    tile.against = distinctEdges(tile);
+    return tile;
+  }
+  function bboxOf(verts) {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const v of verts) { x0 = Math.min(x0, v[0]); y0 = Math.min(y0, v[1]); x1 = Math.max(x1, v[0]); y1 = Math.max(y1, v[1]); }
+    return [x0, y0, x1, y1];
+  }
+  // Which of the tile's own edges give distinct placements against a free edge
+  // (see girih.html): the same for every edge direction, so it is worked out once.
+  function distinctEdges(tile) {
+    const seen = new Set(), out = [];
+    for (let i = 0; i < tile.n; i++) {
+      const r = ((5 - tile.rots[0].dirs[i]) % 10 + 10) % 10, S = tile.rots[r], m = S.mids[i];
+      const k = vertsKey(S.verts.map(p => [p[0] - m[0], p[1] - m[1]]));
+      if (!seen.has(k)) { seen.add(k); out.push(i); }
+    }
+    return out;
+  }
+  function vertsKey(verts) { return verts.map(vkey).sort().join('|'); }
+  const TILES = {};
+  for (const id in DEFS) TILES[id] = buildTile(id, DEFS[id]);
+  const TILE_IDS = Object.keys(TILES);
+
+  // Separating-axis test with Q moved right by dx (a move leaves Q's edge normals as they are);
+  // touching along an edge does not count as overlap.
+  function convexOverlap(P, Q, dx) {
+    for (const poly of [P, Q]) for (let i = 0; i < poly.length; i++) {
+      const a = poly[i], b = poly[(i + 1) % poly.length], nx = -(b[1] - a[1]), ny = b[0] - a[0];
+      let minP = Infinity, maxP = -Infinity, minQ = Infinity, maxQ = -Infinity;
+      for (const p of P) { const d = p[0] * nx + p[1] * ny; if (d < minP) minP = d; if (d > maxP) maxP = d; }
+      for (const q of Q) { const d = (q[0] + dx) * nx + q[1] * ny; if (d < minQ) minQ = d; if (d > maxQ) maxQ = d; }
+      if (maxP <= minQ + 1e-4 || maxQ <= minP + 1e-4) return false;
+    }
+    return true;
+  }
+  function overlapShift(A, B, dx) {
+    const a = A.bbox, b = B.bbox;
+    if (a[2] <= b[0] + dx + 1e-4 || b[2] + dx <= a[0] + 1e-4 || a[3] <= b[1] + 1e-4 || b[3] <= a[1] + 1e-4) return false;
+    for (const p of A.parts) for (const q of B.parts) if (convexOverlap(p, q, dx)) return true;
+    return false;
+  }
+  // Area of the part of a convex polygon above the line y = y0.
+  function areaAbove(P, y0) {
+    const out = [];
+    for (let i = 0; i < P.length; i++) {
+      const a = P[i], b = P[(i + 1) % P.length], ia = a[1] >= y0, ib = b[1] >= y0;
+      if (ia) out.push(a);
+      if (ia !== ib) { const t = (y0 - a[1]) / (b[1] - a[1]); out.push([a[0] + (b[0] - a[0]) * t, y0]); }
+    }
+    return out.length > 2 ? Math.abs(polyArea(out)) : 0;
+  }
+  // Area of the part of a convex polygon between y0 and y1.
+  function areaBetween(P, y0, y1) { return areaAbove(P, y0) - areaAbove(P, y1); }
+
+  // The minaret's surface, unrolled: x wraps around with period C, the circumference, the floor is
+  // y = 0, and the tower grows up without end. C must be a sum of tile edges laid end to end (such
+  // as 1 + 3φ), so that going once round lands on girih vertices again. Tiles are stored with x in
+  // [0, C); an edge or a joint is keyed by its position around the tower, so tiles meet across the
+  // seam as anywhere else.
+  // `fill` is the height up to which the surface is completely covered; only free edges no higher
+  // than `fill + zone` can take a tile, so a gap that can never be filled holds the whole tower back.
+  class Tower {
+    constructor(C, zone) {
+      this.C = C; this.zone = zone;
+      this.tiles = []; this.edgeMap = new Map(); this.vertMap = new Map(); this.nextId = 1; this.rosettes = 0;
+      this.fill = 0;
+      // Free edge key -> { edge, owner, fits: { tileId: [light placements] }, checked }, as in girih.html:
+      // tiles are only ever added, so a placement that stops fitting never fits again.
+      this.cache = new Map();
+    }
+    // Positions around the tower: a point just short of the seam keys the same as one just past it.
+    key(p) { let x = this.wrap(p[0]); if (x > this.C - 5e-4) x -= this.C; return Math.round(x * 1000) + ',' + Math.round(p[1] * 1000); }
+    wrap(x) { const C = this.C; x %= C; if (x < 0) x += C; return x >= C ? x - C : x; }
+    // Wrapped difference b - a, in (-C/2, C/2].
+    dx(a, b) { const C = this.C; let d = (b - a) % C; if (d > C / 2) d -= C; else if (d <= -C / 2) d += C; return d; }
+    place(tile, r, x, y) {
+      x = this.wrap(x);
+      const S = tile.rots[r], T = p => [p[0] + x, p[1] + y];
+      const verts = S.verts.map(T);
+      const edges = verts.map((a, i) => {
+        const b = verts[(i + 1) % verts.length], mid = mul(add(a, b), 0.5);
+        return { a, b, mid, key: this.key(mid), dir: S.dirs[i], i };
+      });
+      return { tile, r, x, y, verts, edges, parts: S.parts.map(pp => pp.map(T)), deco: S.deco.map(s => [T(s[0]), T(s[1])]), bbox: bboxOf(verts), id: 0 };
+    }
+    // Just enough of a placement for the fit tests; place() builds the full one.
+    light(tile, r, x, y) {
+      x = this.wrap(x);
+      const S = tile.rots[r], b = S.bbox;
+      return { tile, r, x, y, parts: S.parts.map(pp => pp.map(p => [p[0] + x, p[1] + y])), bbox: [b[0] + x, b[1] + y, b[2] + x, b[3] + y] };
+    }
+    against(tile, edge) {
+      return tile.against.map(i => {
+        const r = ((edge.dir + 5 - tile.rots[0].dirs[i]) % 10 + 10) % 10, m = tile.rots[r].mids[i];
+        return this.light(tile, r, edge.mid[0] - m[0], edge.mid[1] - m[1]);
+      });
+    }
+    overlaps(A, B) {
+      const C = this.C;
+      return overlapShift(A, B, 0) || overlapShift(A, B, -C) || overlapShift(A, B, C);
+    }
+    aboveFloor(pl) { let s = 0; for (const P of pl.parts) s += areaAbove(P, 0); return s; }
+    fits(pl) {
+      if (this.aboveFloor(pl) < 1e-6) return false;
+      for (const t of this.tiles) if (this.overlaps(pl, t)) return false;
+      return true;
+    }
+    // Whether a tile, or else `extra` (a placement not laid yet), covers the point.
+    covered(p, extra) {
+      const C = this.C;
+      for (const t of extra ? [extra, ...this.tiles] : this.tiles) {
+        const b = t.bbox;
+        if (p[1] < b[1] || p[1] > b[3]) continue;
+        for (const s of [0, -C, C]) {
+          if (p[0] < b[0] + s || p[0] > b[2] + s) continue;
+          if (pointInPoly(t.verts, [p[0] - s, p[1]])) return true;
+        }
+      }
+      return false;
+    }
+    // Lowest height along a free edge where the surface just outside it is still bare
+    // (Infinity if none is): normally the edge's lower end, but a tile that meets it
+    // off-centre can cover part of it.
+    openLow(e, extra) {
+      const d = sub(e.b, e.a), L = len(d), n = [d[1] / L * 0.01, -d[0] / L * 0.01]; // outward, for a counter-clockwise tile
+      let low = Infinity, all = true;
+      for (const t of [0.5, 0.05, 0.3, 0.7, 0.95]) {
+        const q = [e.a[0] + d[0] * t + n[0], e.a[1] + d[1] * t + n[1]];
+        if (q[1] <= 1e-9) continue; // below the floor: not part of the surface
+        if (this.covered(q, extra)) all = false;
+        else low = Math.min(low, Math.max(0, e.a[1] + d[1] * t));
+      }
+      return low < Infinity && all ? Math.max(0, Math.min(e.a[1], e.b[1])) : low;
+    }
+    // Whether the surface just beyond a free edge is above the floor. An edge lying on the floor
+    // counts only if it faces up (the outside of a counter-clockwise tile is to the right).
+    inBand(e) {
+      const hi = Math.max(e.a[1], e.b[1]);
+      if (hi > 1e-9) return true;
+      return Math.min(e.a[1], e.b[1]) > -1e-9 && e.b[0] < e.a[0];
+    }
+    // Raises the fill line to the lowest bare point left, and returns how far it rose.
+    updateFill() {
+      const old = this.fill;
+      let F = Infinity;
+      for (const arr of this.edgeMap.values()) {
+        if (arr.length !== 1) continue;
+        const e = arr[0].e;
+        if (!this.inBand(e) || Math.max(e.a[1], e.b[1]) < old - 1e-6) continue; // under the floor, or wholly below the fill line
+        if (Math.max(0, Math.min(e.a[1], e.b[1])) >= F) continue;
+        const o = this.openLow(e);
+        if (o < F) F = o;
+      }
+      if (F < Infinity && F > this.fill) this.fill = F;
+      return this.fill - old;
+    }
+    // `bulk` skips raising the fill line, for rebuilding a saved tower: call updateFill() after.
+    add(pl, bulk) {
+      pl.id = this.nextId++;
+      this.tiles.push(pl);
+      let shared = 0;
+      const touched = [];
+      for (const e of pl.edges) {
+        const arr = this.edgeMap.get(e.key) || [];
+        arr.push({ t: pl, e });
+        this.edgeMap.set(e.key, arr);
+        if (arr.length > 1) { shared++; this.cache.delete(e.key); }
+        for (const { t } of arr) if (t.tile.id === 'decagon' && !t.rosette && !touched.includes(t)) touched.push(t);
+      }
+      const closed = [];
+      pl.verts.forEach((v, i) => {
+        const k = this.key(v);
+        const rec = this.vertMap.get(k) || { sum: 0, closed: false };
+        rec.sum += pl.tile.angles[i];
+        if (!rec.closed && Math.abs(rec.sum - 360) < 0.5) { rec.closed = true; closed.push(v); }
+        this.vertMap.set(k, rec);
+      });
+      const rosettes = [];
+      for (const t of touched) {
+        if (t.edges.every(e => this.edgeMap.get(e.key).length > 1)) { t.rosette = true; rosettes.push(t); }
+      }
+      this.rosettes += rosettes.length;
+      const rose = bulk ? 0 : this.updateFill();
+      return { shared, closed, rosettes, rose };
+    }
+    top() { return this.fill + this.zone; }
+    // Free edges that can take a tile now: in the working zone, with the surface beyond them above the floor.
+    zoneEdges() {
+      const out = [], top = this.top();
+      for (const arr of this.edgeMap.values()) {
+        if (arr.length !== 1) continue;
+        const { t, e } = arr[0];
+        if (e.mid[1] > top || !this.inBand(e)) continue;
+        out.push({ t, e });
+      }
+      return out;
+    }
+    // Tile id -> Map of edge key -> { edge, owner, placements[] }, for the tile types that fit
+    // somewhere in the zone. Same result as testing every placement against every tile with fits().
+    candidateSets() {
+      const n = this.tiles.length, out = new Map();
+      for (const { t, e } of this.zoneEdges()) {
+        let c = this.cache.get(e.key);
+        if (!c) {
+          c = { edge: e, owner: t, fits: {}, checked: n };
+          for (const id of TILE_IDS) c.fits[id] = this.against(TILES[id], e).filter(pl => this.fits(pl));
+          this.cache.set(e.key, c);
+        } else if (c.checked < n) {
+          for (const id in c.fits) {
+            const pls = c.fits[id];
+            if (pls.length) c.fits[id] = pls.filter(pl => { for (let k = c.checked; k < n; k++) if (this.overlaps(pl, this.tiles[k])) return false; return true; });
+          }
+          c.checked = n;
+        }
+        for (const id of TILE_IDS) {
+          const pls = c.fits[id];
+          if (!pls.length) continue;
+          if (!out.has(id)) out.set(id, new Map());
+          out.get(id).set(e.key, { edge: e, owner: t, placements: pls });
+        }
+      }
+      return new Map(TILE_IDS.filter(id => out.has(id)).map(id => [id, out.get(id)]));
+    }
+    // Free edges in the zone that nothing will ever fit against although the surface beyond
+    // them is bare: each marks a gap that can never be filled, so the fill line can never rise
+    // past `low`, the bottom of the bare stretch. Call after candidateSets().
+    deadEdges() {
+      const out = [];
+      for (const { e } of this.zoneEdges()) {
+        const c = this.cache.get(e.key);
+        if (!c || TILE_IDS.some(id => c.fits[id].length)) continue;
+        const low = this.openLow(e);
+        if (low < Infinity) out.push({ e, low });
+      }
+      return out;
+    }
+    // How many edges deadEdges() would find if P were laid: more than it finds now means P
+    // would make a gap that no tile can ever fill. Call after candidateSets().
+    deadAfter(P) {
+      const pKeys = new Set(P.edges.map(e => e.key)), top = this.top();
+      let dead = 0;
+      for (const { e } of this.zoneEdges()) {
+        const c = this.cache.get(e.key);
+        if (pKeys.has(e.key) || !c || this.openLow(e, P) === Infinity) continue;
+        if (!TILE_IDS.some(id => c.fits[id].some(pl => !this.overlaps(pl, P)))) dead++;
+      }
+      for (const e of P.edges) {
+        if (this.edgeMap.has(e.key) || e.mid[1] > top || !this.inBand(e) || this.openLow(e, P) === Infinity) continue;
+        if (!TILE_IDS.some(id => this.against(TILES[id], e).some(pl => !this.overlaps(pl, P) && this.fits(pl)))) dead++;
+      }
+      return dead;
+    }
+    // Open joints in the zone that can only close with a 108° corner (a pentagon's, or a rhombus's
+    // blunt one). In steps of 36° the corners are 2, 3, 4 and 6 and a closed joint holds 10, so
+    // 108° corners meet in pairs: a joint short of an odd number of steps needs one.
+    oddJoints() {
+      const out = [], lo = this.fill - 1e-3, hi = this.top() + 0.5;
+      for (const [k, rec] of this.vertMap) {
+        if (rec.closed || Math.round((360 - rec.sum) / 36) % 2 === 0) continue;
+        const i = k.indexOf(','), p = [+k.slice(0, i) / 1000, +k.slice(i + 1) / 1000];
+        if (p[1] <= 0.01 || p[1] < lo || p[1] > hi) continue;
+        // a corner that ends on another tile's edge leaves the joint uncounted but covered
+        let bare = false;
+        for (let a = 0; a < 10 && !bare; a++) {
+          const q = [p[0] + 0.04 * Math.cos((18 + 36 * a) * DEG), p[1] + 0.04 * Math.sin((18 + 36 * a) * DEG)];
+          bare = q[1] > 0 && !this.covered(q);
+        }
+        if (bare) out.push(p);
+      }
+      return out;
+    }
+    // Area of tile surface between heights y0 and y1 (tiles never overlap, so it simply adds up).
+    areaBetween(y0, y1) {
+      let s = 0;
+      for (const t of this.tiles) {
+        if (t.bbox[3] <= y0 || t.bbox[1] >= y1) continue;
+        for (const P of t.parts) s += areaBetween(P, y0, y1);
+      }
+      return s;
+    }
+  }
+
+  // The first course: `ring` decagons in a zigzag, every other one sunk into the floor, each
+  // sharing an edge with the next (edge-sharing decagons sit 2 × inradius apart at 18°). Two of
+  // them go exactly once round a tower of circumference 1 + 3φ, closing the ring from the start.
+  function seed(tw, ring) {
+    const S = TILES.decagon.rots[0], y = -S.bbox[1], step = 2 * y * Math.cos(18 * DEG), rise = 2 * y * Math.sin(18 * DEG);
+    const n = ring || 1;
+    for (let i = 0; i < n; i++) tw.add(tw.place(TILES.decagon, 0, tw.C / 2 + i * step, y - (i % 2) * rise));
+    return tw;
+  }
+
+  return { DEG, TILES, TILE_IDS, Tower, seed, vkey, vertsKey, pointInPoly, polyArea };
+})();
+</script>
+<script>
+(() => {
+  'use strict';
+  const { TILES, TILE_IDS, Tower, seed } = MINARET;
+
+  const COLORS = { decagon: '#22306b', hexagon: '#2a8f86', bowtie: '#3b63b5', pentagon: '#b4522c', rhombus: '#c99a3a' };
+  const IVORY = '#efe3c4', STRAP_DARK = '#0b0913', GOLD = '#d6a748', BRICK = '#5b3a2e', SURFACE = '#1a1f3e', RED = '#ff5a4a', RUST = '#e07a4f';
+  // Two edge-sharing decagons go exactly once round a tower this wide (see seed()). At most other
+  // widths the pattern cannot meet itself round the back, and a crack opens there that no tile fills.
+  const CIRC = 1 + 3 * (1 + Math.sqrt(5)) / 2, RING = 2;
+  const ZONE = 6;             // tiles can go up to this far above the lowest open gap
+  const SKIPS = 3, REGEN = 4; // at most 3 set-asides; one comes back each time the tower is complete 4 higher
+  // The view: at least this much finished tower below the lowest gap, sky above the scaffold line,
+  // and band past each side, where the far side of the tower shows again.
+  const BELOW = 1.2, ABOVE = 1.4, SIDE = 0.6;
+  const SAVE_KEY = 'minaret-save-1', BEST_KEY = 'minaret-best';
+  const WARN = 'Set here, this tile would leave a gap no tile can fill.';
+
+  const $ = s => document.querySelector(s);
+  const canvas = $('#board'), ctx = canvas.getContext('2d');
+  const layer = document.createElement('canvas'), lctx = layer.getContext('2d');
+  const overlay = $('#overlay');
+  const dpr = () => window.devicePixelRatio || 1;
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  const calm = () => reduceMotion.matches;
+  const fmt = h => h.toFixed(1);
+
+  let tw = null, queue = [], skips = SKIPS, regenLevel = 0, phase = 'title';
+  let best = 0, bestBefore = 0, capAt = Infinity, dead = [], odd = [], note = '';
+  let cands = new Map(), candList = [], sel = null, warn = false;
+  let sc = 40, bandLeft = 0, cssW = 40, cssH = 40, D = 1; // D: the pixel ratio the canvases were last sized for
+  // The camera follows camF, which glides after the fill line while building; rot turns the tower.
+  let camF = 0, camT = 0, rot = 0, layerAt = '';
+  let flashes = [];
+
+  // ---------- drawing (world units, y up, x round the tower) ----------
+  function poly(c, P, o) { c.moveTo(P[0][0] + o, P[0][1]); for (let i = 1; i < P.length; i++) c.lineTo(P[i][0] + o, P[i][1]); c.closePath(); }
+  function straps(c, segs, color, width, o) {
+    o = o || 0;
+    c.strokeStyle = color; c.lineWidth = width; c.lineCap = 'round'; c.lineJoin = 'round';
+    c.beginPath();
+    for (const s of segs) { c.moveTo(s[0][0] + o, s[0][1]); c.lineTo(s[1][0] + o, s[1][1]); }
+    c.stroke();
+  }
+  // How far along the band to draw something that spans x0..x1 once the tower is turned by rot:
+  // where it shows, and its copies a circumference either side, whichever are in view.
+  function shifts(x0, x1) {
+    const base = tw.wrap(x0 + rot) - x0, out = [];
+    for (const o of [base - CIRC, base, base + CIRC]) if (x1 + o > -SIDE && x0 + o < CIRC + SIDE) out.push(o);
+    return out;
+  }
+  const edgeShifts = e => shifts(Math.min(e.a[0], e.b[0]), Math.max(e.a[0], e.b[0]));
+  // The scaffold line sits near the top of the view; a view taller than the working zone shows more
+  // of the finished tower below it, but never more than a little below the floor.
+  const viewBottom = () => Math.max(-BELOW, camF + ZONE + ABOVE - cssH / sc);
+  function setWorld(c) { c.setTransform(D * sc, 0, 0, -D * sc, D * bandLeft, D * (cssH + viewBottom() * sc)); }
+  function clipBand(c) { c.beginPath(); c.rect(-SIDE, viewBottom() - 1, CIRC + 2 * SIDE, cssH / sc + 2); c.clip(); }
+
+  // Below the fill line the tower is finished and the scaffolding gives way to brick behind the
+  // strapwork; above it the tiles keep their colours.
+  function renderLayer() {
+    const c = lctx;
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    c.clearRect(0, 0, layer.width, layer.height);
+    setWorld(c);
+    c.save(); clipBand(c);
+    const y0 = viewBottom() - 0.1, y1 = y0 + cssH / sc + 0.2, F = tw.fill, vis = [];
+    for (const t of tw.tiles) {
+      if (t.bbox[3] < y0 || t.bbox[1] > y1) continue;
+      for (const o of shifts(t.bbox[0], t.bbox[2])) vis.push([t, o]);
+    }
+    for (const done of [true, false]) {
+      c.save();
+      c.beginPath(); c.rect(-SIDE - 1, done ? y0 : F, CIRC + 2 * SIDE + 2, done ? F - y0 : y1 - F); c.clip();
+      for (const [t, o] of vis) { c.fillStyle = done ? BRICK : COLORS[t.tile.id]; c.beginPath(); poly(c, t.verts, o); c.fill(); }
+      if (!done) {
+        c.strokeStyle = 'rgba(0,0,0,0.35)'; c.lineWidth = 0.025; c.lineJoin = 'round';
+        c.beginPath(); for (const [t, o] of vis) poly(c, t.verts, o); c.stroke();
+      }
+      c.restore();
+    }
+    for (const [color, width] of [[STRAP_DARK, 0.13], [IVORY, 0.06]]) {
+      c.strokeStyle = color; c.lineWidth = width; c.lineCap = 'round';
+      c.beginPath();
+      for (const [t, o] of vis) for (const s of t.deco) { c.moveTo(s[0][0] + o, s[0][1]); c.lineTo(s[1][0] + o, s[1][1]); }
+      c.stroke();
+    }
+    c.restore();
+  }
+
+  function draw(now) {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (!tw) return;
+    const key = [camF, rot, sc, D, cssH, bandLeft, tw.tiles.length, tw.fill].join('|');
+    if (key !== layerAt) { renderLayer(); layerAt = key; }
+    setWorld(ctx);
+    const yb = viewBottom(), yt = yb + cssH / sc, top = tw.top(), L = -SIDE, R = CIRC + SIDE;
+    ctx.fillStyle = SURFACE; ctx.fillRect(L, Math.max(0, yb), R - L, yt - Math.max(0, yb));
+    ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(layer, 0, 0); ctx.restore();
+    // shade what is out of play: under the floor, above the scaffold line, and the band past each side
+    ctx.fillStyle = 'rgba(15,18,38,0.75)';
+    if (yb < 0) ctx.fillRect(L, yb, R - L, -yb);
+    ctx.fillStyle = 'rgba(15,18,38,0.5)';
+    if (phase === 'play' && top < yt) ctx.fillRect(L, top, R - L, yt - top);
+    ctx.fillStyle = 'rgba(15,18,38,0.55)';
+    ctx.fillRect(L, yb, SIDE, yt - yb); ctx.fillRect(CIRC, yb, SIDE, yt - yb);
+    ctx.lineCap = 'butt';
+    ctx.strokeStyle = GOLD; ctx.lineWidth = 0.06;
+    ctx.beginPath(); ctx.moveTo(L, 0); ctx.lineTo(R, 0); ctx.stroke();
+    if (phase === 'play' && top < yt) {
+      ctx.strokeStyle = IVORY; ctx.globalAlpha = 0.6; ctx.lineWidth = 0.025; ctx.setLineDash([0.12, 0.12]);
+      ctx.beginPath(); ctx.moveTo(L, top); ctx.lineTo(R, top); ctx.stroke();
+      ctx.setLineDash([]); ctx.globalAlpha = 1;
+    }
+    ctx.save(); clipBand(ctx);
+    // gaps that no tile can fill
+    ctx.strokeStyle = RED; ctx.lineWidth = 0.07; ctx.lineCap = 'round';
+    ctx.beginPath();
+    for (const { e } of dead) for (const o of edgeShifts(e)) { ctx.moveTo(e.a[0] + o, e.a[1]); ctx.lineTo(e.b[0] + o, e.b[1]); }
+    ctx.stroke();
+    if (phase === 'play') {
+      // joints that only a 108° corner can close
+      ctx.fillStyle = RUST; ctx.strokeStyle = IVORY; ctx.lineWidth = 0.03;
+      for (const p of odd) for (const o of shifts(p[0], p[0])) { ctx.beginPath(); ctx.arc(p[0] + o, p[1], 0.1, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
+      const pulse = calm() ? 0.5 : 0.5 + 0.5 * Math.sin(now / 350);
+      ctx.strokeStyle = GOLD; ctx.lineCap = 'round';
+      for (const cnd of candList) {
+        const e = cnd.edge, isSel = sel && sel.key === e.key;
+        ctx.globalAlpha = isSel ? 1 : 0.4 + 0.3 * pulse;
+        ctx.lineWidth = isSel ? 0.2 : 0.11;
+        ctx.beginPath();
+        for (const o of edgeShifts(e)) { ctx.moveTo(e.a[0] + o, e.a[1]); ctx.lineTo(e.b[0] + o, e.b[1]); }
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      const g = ghost();
+      if (g) {
+        const col = warn ? RED : GOLD;
+        for (const o of shifts(g.bbox[0], g.bbox[2])) {
+          ctx.globalAlpha = 0.6; ctx.fillStyle = COLORS[g.tile.id]; ctx.beginPath(); poly(ctx, g.verts, o); ctx.fill();
+          ctx.globalAlpha = 0.9; straps(ctx, g.deco, col, 0.05, o);
+          ctx.strokeStyle = col; ctx.lineWidth = 0.05; ctx.lineJoin = 'round'; ctx.beginPath(); poly(ctx, g.verts, o); ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+      }
+    }
+    for (const f of flashes) {
+      const p = Math.max(0, (now - f.t0) / f.dur), r = f.r0 + (f.r1 - f.r0) * p;
+      ctx.globalAlpha = 1 - p;
+      ctx.strokeStyle = f.kind === 'rosette' ? IVORY : GOLD;
+      ctx.lineWidth = f.kind === 'rosette' ? 0.08 : 0.05;
+      for (const o of shifts(f.pos[0] - r, f.pos[0] + r)) { ctx.beginPath(); ctx.arc(f.pos[0] + o, f.pos[1], r, 0, Math.PI * 2); ctx.stroke(); }
+    }
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+  // Frames are drawn on demand: after a change, and continuously only while something moves.
+  let frameReq = 0;
+  function requestDraw() { if (!frameReq) frameReq = requestAnimationFrame(frame); }
+  function frame(now) {
+    frameReq = 0;
+    // while building, the camera glides up after the fill line; once the tower is done it stays put
+    const F = tw ? tw.fill : 0;
+    if (phase === 'play' && camF < F) {
+      if (calm()) camF = F;
+      else {
+        const dt = camT ? Math.min(100, now - camT) : 16;
+        camF += (F - camF) * (1 - Math.exp(-dt / 220));
+        if (F - camF < 1e-3) camF = F;
+      }
+    }
+    const moving = phase === 'play' && camF < F;
+    camT = moving ? now : 0;
+    flashes = flashes.filter(f => now - f.t0 < f.dur);
+    try { draw(now); } catch (err) { console.error(err); } // one bad frame must not stop rendering for good
+    if (moving || flashes.length || (phase === 'play' && candList.length && !calm())) requestDraw();
+  }
+
+  // Resizes a canvas's bitmap only when its pixel size actually changes
+  // (assigning width or height reallocates and clears it even when unchanged).
+  function sizeCanvas(cv, w, h) {
+    cv.style.width = w + 'px'; cv.style.height = h + 'px';
+    const pw = Math.round(w * dpr()), ph = Math.round(h * dpr());
+    if (cv.width === pw && cv.height === ph) return false;
+    cv.width = pw; cv.height = ph;
+    return true;
+  }
+  function drawIcon(cv, id, px, size) {
+    sizeCanvas(cv, size, size);
+    const c = cv.getContext('2d'), d = dpr(), t = TILES[id];
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    c.clearRect(0, 0, cv.width, cv.height);
+    if (!t) return;
+    c.setTransform(d * px, 0, 0, -d * px, d * size / 2, d * size / 2);
+    const S = t.rots[0];
+    c.fillStyle = COLORS[id]; c.beginPath(); poly(c, S.verts, 0); c.fill();
+    c.strokeStyle = 'rgba(0,0,0,0.35)'; c.lineWidth = 0.025; c.lineJoin = 'round'; c.stroke();
+    straps(c, S.deco, STRAP_DARK, 0.13);
+    straps(c, S.deco, IVORY, 0.06);
+  }
+
+  function resize() {
+    const r = $('#boardwrap').getBoundingClientRect();
+    cssW = Math.max(40, Math.floor(r.width)); cssH = Math.max(40, Math.floor(r.height));
+    const dprChanged = dpr() !== D;
+    D = dpr();
+    if (sizeCanvas(canvas, cssW, cssH)) { layer.width = canvas.width; layer.height = canvas.height; layerAt = ''; }
+    sc = Math.min(cssW / (CIRC + 2 * SIDE), cssH / (BELOW + ZONE + ABOVE));
+    bandLeft = (cssW - CIRC * sc) / 2;
+    if (dprChanged) drawLegend();
+    updateHand(); // the hand icons change size across the small-screen breakpoint
+    requestDraw();
+  }
+  // A move to a screen with another pixel ratio changes neither the CSS size (ResizeObserver)
+  // nor always fires window resize, so watch the ratio itself; each query matches one value.
+  function watchDpr() {
+    const mq = window.matchMedia(`(resolution: ${dpr()}dppx)`);
+    if (mq.addEventListener) mq.addEventListener('change', () => { resize(); watchDpr(); }, { once: true });
+  }
+
+  // ---------- game flow ----------
+  function newTower() {
+    tw = seed(new Tower(CIRC, ZONE), RING);
+    queue = []; skips = SKIPS; regenLevel = 0; capAt = Infinity; bestBefore = best;
+    rot = 0; camF = 0; camT = 0; flashes = [];
+    say('');
+    refresh();
+  }
+  // Candidates hold light placements; the full one is built when previewed.
+  function ghost() {
+    if (!sel) return null;
+    const c = cands.get(sel.key), full = c.full || (c.full = []);
+    if (!full[sel.idx]) { const p = c.placements[sel.idx]; full[sel.idx] = tw.place(p.tile, p.r, p.x, p.y); }
+    return full[sel.idx];
+  }
+  // Shows the previewed placement's news: `extra`, and a warning if it would leave a gap no tile can fill.
+  function preview(extra) {
+    const g = ghost();
+    warn = !!g && tw.deadAfter(g) > dead.length;
+    const bits = extra ? [extra] : [];
+    if (warn) bits.push(WARN);
+    setMsg(bits.length ? bits.join(' ') : note);
+  }
+  // `lead` is the message for the move that led here (undefined keeps the one showing).
+  function refresh(lead) {
+    sel = null; warn = false;
+    const byType = tw.candidateSets();
+    dead = tw.deadEdges(); odd = tw.oddJoints();
+    const msg = lead ? [lead] : [];
+    const cap = dead.reduce((m, d) => Math.min(m, d.low), Infinity);
+    if (cap < capAt - 1e-9) {
+      capAt = cap;
+      msg.push('No tile can ever fill the gap in red, so the tower will never be complete above ' + fmt(cap) + '.');
+    }
+    if (!byType.size) { finish(msg.join(' ')); return; }
+    // only tiles that fit somewhere right now are dealt; tiles the tower has outgrown leave the queue at no cost
+    const gone = queue.filter(id => !byType.has(id));
+    if (gone.length) msg.push('No longer fits and set aside: ' + gone.map(id => TILES[id].name.toLowerCase()).join(', ') + '.');
+    if (msg.length || lead !== undefined) say(msg.join(' '));
+    queue = queue.filter(id => byType.has(id));
+    const bag = [];
+    for (const id of byType.keys()) for (let k = 0; k < TILES[id].weight; k++) bag.push(id);
+    while (queue.length < 3) queue.push(bag[Math.floor(Math.random() * bag.length)]);
+    cands = byType.get(queue[0]);
+    // lowest first, since the tower rises only as its lowest gaps close
+    candList = [...cands.values()].sort((a, b) => a.edge.mid[1] - b.edge.mid[1] || tw.wrap(a.edge.mid[0] + rot) - tw.wrap(b.edge.mid[0] + rot));
+    updateHand(); updateHud();
+  }
+  function selectEdge(key, idx) {
+    if (!cands.has(key)) return;
+    sel = { key, idx: (idx || 0) % cands.get(key).placements.length };
+    preview();
+    updateHud();
+  }
+  function deselect() { sel = null; warn = false; setMsg(note); updateHud(); }
+  function turn() {
+    if (!sel) return;
+    const n = cands.get(sel.key).placements.length;
+    sel.idx = (sel.idx + 1) % n;
+    preview(n > 1 ? 'Orientation ' + (sel.idx + 1) + ' of ' + n + '.' : 'Only one way fits here.');
+  }
+  function setTile() {
+    const pl = ghost();
+    if (!pl || phase !== 'play') return;
+    const res = tw.add(pl);
+    if (!calm()) {
+      const now = performance.now();
+      for (const v of res.closed) flashes.push({ pos: v, t0: now, dur: 700, r0: 0.12, r1: 0.5, kind: 'joint' });
+      for (const t of res.rosettes) flashes.push({ pos: [t.x, t.y], t0: now, dur: 1100, r0: 1.5, r1: 2.4, kind: 'rosette' });
+    }
+    const bits = [];
+    if (res.shared > 1) bits.push(res.shared + ' edges joined');
+    if (res.closed.length) bits.push(res.closed.length + (res.closed.length === 1 ? ' joint closed' : ' joints closed'));
+    if (res.rosettes.length) bits.push('rosette completed');
+    let lead = bits.length ? bits.join(', ') + '.' : '';
+    if (lead) lead = lead[0].toUpperCase() + lead.slice(1);
+    const level = Math.floor(tw.fill / REGEN + 1e-9);
+    if (level > regenLevel) {
+      const back = Math.min(SKIPS - skips, level - regenLevel);
+      regenLevel = level;
+      if (back > 0) { skips += back; lead += (lead ? ' ' : '') + (back === 1 ? 'A set-aside is back.' : back + ' set-asides are back.'); }
+    }
+    if (tw.fill > best) { best = tw.fill; saveBest(); }
+    queue.shift();
+    refresh(lead);
+    save();
+  }
+  function skip() {
+    if (phase !== 'play' || skips <= 0) return;
+    skips--;
+    const lead = 'The ' + TILES[queue[0]].name.toLowerCase() + ' is set aside.';
+    queue.shift();
+    refresh(lead);
+    save();
+  }
+  function finish(lead) {
+    phase = 'done';
+    sel = null; warn = false; candList = []; cands = new Map(); odd = []; queue = [];
+    const h = tw.fill, bits = lead ? [lead] : [];
+    bits.push('Nothing more fits. The tower is complete to a height of ' + fmt(h) + (h > bestBefore + 1e-9 ? ', your best yet.' : '; your best is ' + fmt(best) + '.'));
+    bits.push('Drag to look it over.');
+    say(bits.join(' '));
+    setDoneButtons(true);
+    updateHand(); updateHud();
+    save();
+  }
+  function setDoneButtons(done) {
+    $('#btn-new').hidden = !done;
+    for (const id of ['#btn-turn', '#btn-set', '#btn-skip']) $(id).hidden = done;
+  }
+  function startGame() {
+    phase = 'play';
+    setDoneButtons(false);
+    newTower(); save();
+  }
+
+  // ---------- persistence ----------
+  function save() {
+    if (!tw) return;
+    try {
+      localStorage.setItem(SAVE_KEY, JSON.stringify({
+        circ: CIRC, zone: ZONE, skips, regenLevel, queue, phase, rot, msg: note, bestBefore,
+        tiles: tw.tiles.map(t => ({ id: t.tile.id, r: t.r, x: t.x, y: t.y })),
+      }));
+    } catch (e) { /* storage unavailable; play on without saving */ }
+  }
+  function clearSave() { try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* nothing to clear */ } }
+  function saveBest() { try { localStorage.setItem(BEST_KEY, String(best)); } catch (e) { /* storage unavailable */ } }
+  function loadBest() {
+    try { const v = Number(localStorage.getItem(BEST_KEY)); return Number.isFinite(v) && v > 0 ? v : 0; } catch (e) { return 0; }
+  }
+  // Returns { s, tower } for a usable save; an unreadable one is deleted.
+  function loadSave() {
+    let raw = null;
+    try { raw = localStorage.getItem(SAVE_KEY); } catch (e) { return null; }
+    if (raw === null) return null;
+    try { const v = parseSave(JSON.parse(raw)); if (v) return v; } catch (e) { /* fall through */ }
+    clearSave();
+    return null;
+  }
+  const isTile = id => typeof id === 'string' && Object.prototype.hasOwnProperty.call(TILES, id);
+  const isInt = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
+  function parseSave(s) {
+    if (!s || typeof s !== 'object' || (s.phase !== 'play' && s.phase !== 'done')) return null;
+    if (s.circ !== CIRC || s.zone !== ZONE) return null;
+    if (!isInt(s.skips, 0, SKIPS) || !isInt(s.regenLevel, 0, 1e6) || !Number.isFinite(s.rot)) return null;
+    if (!Array.isArray(s.queue) || s.queue.length > 3 || !s.queue.every(isTile)) return null;
+    if (typeof s.msg !== 'string' || !Number.isFinite(s.bestBefore) || s.bestBefore < 0) return null;
+    if (!Array.isArray(s.tiles) || s.tiles.length < RING) return null;
+    const t = new Tower(CIRC, ZONE);
+    for (const d of s.tiles) {
+      if (!d || !isTile(d.id) || !isInt(d.r, 0, 9) || !Number.isFinite(d.x) || !Number.isFinite(d.y)) return null;
+      const pl = t.place(TILES[d.id], d.r, d.x, d.y);
+      if (!t.fits(pl)) return null; // an edited or stale save must not rebuild into overlaps
+      t.add(pl, true);
+    }
+    t.updateFill();
+    return { s, tower: t };
+  }
+  function restore({ s, tower }) {
+    tw = tower; skips = s.skips; regenLevel = s.regenLevel; queue = s.queue.slice(); rot = tw.wrap(s.rot);
+    bestBefore = s.bestBefore; note = s.msg;
+    if (tw.fill > best) { best = tw.fill; saveBest(); }
+    camF = tw.fill; camT = 0; flashes = [];
+    tw.candidateSets(); dead = tw.deadEdges();
+    capAt = dead.reduce((m, d) => Math.min(m, d.low), Infinity);
+    if (s.phase === 'done') {
+      phase = 'done'; sel = null; warn = false; candList = []; cands = new Map(); odd = []; queue = [];
+      setMsg(note); setDoneButtons(true); updateHand(); updateHud();
+    } else {
+      phase = 'play'; setDoneButtons(false); setMsg(note);
+      refresh();
+    }
+  }
+  function updateHand() {
+    const small = window.matchMedia('(max-width: 640px), (orientation: portrait)').matches;
+    drawIcon($('#now'), queue[0], small ? 17 : 22, small ? 64 : 84);
+    drawIcon($('#n1'), queue[1], small ? 10 : 12, small ? 36 : 44);
+    drawIcon($('#n2'), queue[2], small ? 10 : 12, small ? 36 : 44);
+  }
+  function updateHud() {
+    const h = tw ? tw.fill : 0;
+    $('#height').textContent = fmt(h);
+    $('#best').textContent = fmt(Math.max(best, h));
+    $('#limit-wrap').hidden = !(capAt < Infinity);
+    if (capAt < Infinity) $('#limit').textContent = fmt(capAt);
+    $('#skips').textContent = skips;
+    $('#btn-turn').disabled = !(sel && cands.get(sel.key).placements.length > 1);
+    $('#btn-set').disabled = !sel;
+    $('#btn-skip').disabled = skips <= 0 || phase !== 'play';
+    requestDraw();
+  }
+  function setMsg(s) { $('#msg').textContent = s; }
+  function say(s) { note = s; setMsg(s); }
+  function hideOverlay() {
+    overlay.classList.remove('show');
+    if (overlay.contains(document.activeElement)) document.activeElement.blur();
+  }
+
+  // ---------- input ----------
+  // A tap picks an edge; a drag sideways turns the tower, and once it is done, a drag up or down looks it over.
+  let press = null;
+  canvas.addEventListener('pointerdown', e => {
+    // primary pointer and main button only: no right-clicks, no second fingers
+    press = tw && e.isPrimary && e.button === 0 ? { x: e.clientX, y: e.clientY, rot0: rot, cam0: camF, mode: null } : null;
+    if (press && canvas.setPointerCapture) { try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* not capturable */ } }
+  });
+  canvas.addEventListener('pointermove', e => {
+    if (!press || !e.isPrimary) return;
+    const dx = e.clientX - press.x, dy = e.clientY - press.y;
+    if (!press.mode && Math.hypot(dx, dy) > 12) press.mode = phase === 'done' && Math.abs(dy) > Math.abs(dx) ? 'look' : 'turn';
+    if (press.mode === 'turn') rot = tw.wrap(press.rot0 + dx / sc);
+    else if (press.mode === 'look') camF = Math.max(0, Math.min(tw.fill, press.cam0 + dy / sc));
+    if (press.mode) requestDraw();
+  });
+  canvas.addEventListener('pointerup', e => {
+    if (!press || !e.isPrimary) return;
+    const p = press;
+    press = null;
+    if (p.mode || phase !== 'play') return;
+    const r = canvas.getBoundingClientRect();
+    const wx = (e.clientX - r.left - bandLeft) / sc - rot, wy = viewBottom() + (cssH - (e.clientY - r.top)) / sc;
+    let bestC = null, bd = 0.75;
+    for (const cnd of candList) {
+      const d = Math.hypot(tw.dx(wx, cnd.edge.mid[0]), cnd.edge.mid[1] - wy);
+      if (d < bd) { bd = d; bestC = cnd; }
+    }
+    if (!bestC) { deselect(); return; }
+    if (sel && sel.key === bestC.edge.key) turn(); else selectEdge(bestC.edge.key, 0);
+    updateHud();
+  });
+  canvas.addEventListener('pointercancel', () => { press = null; });
+  canvas.addEventListener('wheel', e => {
+    if (phase !== 'done' || !tw) return;
+    e.preventDefault();
+    camF = Math.max(0, Math.min(tw.fill, camF - e.deltaY * (e.deltaMode === 1 ? 16 : 1) / sc));
+    requestDraw();
+  }, { passive: false });
+
+  $('#btn-turn').addEventListener('click', () => { turn(); updateHud(); });
+  $('#btn-set').addEventListener('click', setTile);
+  $('#btn-skip').addEventListener('click', skip);
+  $('#btn-new').addEventListener('click', () => { if (phase === 'done') startGame(); });
+  let hasSave = false, replaceArmed = false;
+  $('#btn-start').addEventListener('click', () => {
+    if (hasSave && !replaceArmed) { // first press only warns
+      replaceArmed = true;
+      $('#new-warn').hidden = false;
+      $('#btn-start').textContent = 'Replace it';
+      return;
+    }
+    hideOverlay(); startGame();
+  });
+  $('#btn-continue').addEventListener('click', () => {
+    hideOverlay();
+    const v = loadSave();
+    if (v) {
+      try { restore(v); return; } catch (err) { console.error(err); clearSave(); }
+    }
+    startGame();
+    say('The saved tower could not be read, so a new one has begun.');
+  });
+  // A mouse or touch click leaves focus on the button; drop it so that Enter and Space
+  // go back to the board (keyboard-activated clicks have detail 0 and keep focus).
+  document.addEventListener('click', e => {
+    const b = e.target instanceof Element && e.target.closest('button');
+    if (b && e.detail > 0) b.blur();
+  });
+  const focusedButton = e => {
+    const b = e.target instanceof Element && e.target.closest('button');
+    return b && b.getClientRects().length ? b : null;
+  };
+
+  window.addEventListener('keydown', e => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return; // leave browser shortcuts alone
+    const k = e.key;
+    // a focused button activates itself on Enter/Space; acting here too would fire twice
+    if ((k === 'Enter' || k === ' ') && focusedButton(e)) return;
+    if ((k === '[' || k === ']') && tw && phase !== 'title') {
+      e.preventDefault();
+      rot = tw.wrap(rot + (k === ']' ? 1 : -1) * CIRC / 12);
+      requestDraw();
+      return;
+    }
+    if (phase === 'done') {
+      if (k === 'Enter') { e.preventDefault(); if (!e.repeat) $('#btn-new').click(); }
+      else if (k === 'ArrowUp' || k === 'ArrowDown') {
+        e.preventDefault();
+        camF = Math.max(0, Math.min(tw.fill, camF + (k === 'ArrowUp' ? 1 : -1)));
+        requestDraw();
+      }
+      return;
+    }
+    if (phase !== 'play') {
+      if (k === 'Enter') {
+        const b = [...overlay.querySelectorAll('[data-view].on button')].find(b => !b.hidden);
+        if (b) { e.preventDefault(); if (!e.repeat) b.click(); }
+      }
+      return;
+    }
+    if (k === 'ArrowLeft' || k === 'ArrowRight') {
+      e.preventDefault();
+      if (!candList.length) return;
+      let i = sel ? candList.findIndex(c => c.edge.key === sel.key) : -1;
+      i = (i + (k === 'ArrowRight' ? 1 : -1) + candList.length) % candList.length;
+      selectEdge(candList[i].edge.key, 0);
+    } else if (k === 'ArrowUp' || k === 'ArrowDown' || k === 'r' || k === 'R') { e.preventDefault(); turn(); updateHud(); }
+    else if (k === 'Enter' || k === ' ') { e.preventDefault(); if (!e.repeat) setTile(); }
+    else if (k === 's' || k === 'S') { if (!e.repeat) skip(); } // holding S must not burn every set-aside
+    else if (k === 'Escape') deselect();
+  });
+
+  // ---------- title legend ----------
+  const legendIcons = TILE_IDS.map(id => {
+    const fig = document.createElement('figure');
+    const cv = document.createElement('canvas');
+    fig.appendChild(cv);
+    const cap = document.createElement('figcaption');
+    cap.textContent = TILES[id].name;
+    fig.appendChild(cap);
+    $('#legend').appendChild(fig);
+    return [cv, id];
+  });
+  function drawLegend() { for (const [cv, id] of legendIcons) drawIcon(cv, id, 16, 60); }
+
+  // ---------- self-test (runs only with #test) ----------
+  // Checks the game logic against slow, direct reference versions on seeded towers of its own.
+  // It never touches the tower in progress or the saved game.
+  function selfTest() {
+    const M = MINARET, fails = [];
+    let n = 0;
+    const ok = (cond, name) => { n++; if (!cond) fails.push(name); };
+    const near = (a, b, tol) => Math.abs(a - b) < (tol || 1e-9);
+    const rng = seed => () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32;
+    const pkey = (t, p) => p.tile.id + ':' + p.r + ':' + t.key([p.x, p.y]);
+    // tile id -> edge key -> sorted placement keys, as one comparable string
+    const canon = sets => JSON.stringify([...sets].map(([id, m]) => [id, [...m].sort()]));
+    const fromTower = t => canon([...t.candidateSets()].map(([id, m]) => [id, [...m].map(([k, c]) => [k, c.placements.map(p => pkey(t, p)).sort()])]));
+    const direct = t => {
+      const out = new Map();
+      for (const { e } of t.zoneEdges()) for (const id of TILE_IDS) {
+        const keys = t.against(TILES[id], e).filter(pl => t.fits(pl)).map(p => pkey(t, p)).sort();
+        if (!keys.length) continue;
+        if (!out.has(id)) out.set(id, []);
+        out.get(id).push([e.key, keys]);
+      }
+      return canon(TILE_IDS.filter(id => out.has(id)).map(id => [id, out.get(id)]));
+    };
+    try {
+      // tiles: unit edges and the right angle sums (the geometry is girih.html's)
+      const distinct = { decagon: 1, hexagon: 3, bowtie: 3, pentagon: 1, rhombus: 2 };
+      for (const id of TILE_IDS) {
+        const t = TILES[id], v = t.rots[0].verts, next = i => v[(i + 1) % t.n];
+        ok(v.every((p, i) => near(Math.hypot(next(i)[0] - p[0], next(i)[1] - p[1]), 1)), id + ': edges have unit length');
+        ok(t.angles.reduce((a, b) => a + b, 0) === (t.n - 2) * 180, id + ': interior angles sum to (n - 2) × 180°');
+        ok(t.against.length === distinct[id], id + ': ' + distinct[id] + ' distinct placements against an edge');
+      }
+      // round the tower
+      const inr = -TILES.decagon.rots[0].bbox[1];
+      ok(near(4 * inr * Math.cos(18 * M.DEG), CIRC, 1e-9), 'two edge-sharing decagons in a zigzag go exactly once round');
+      const t0 = new Tower(CIRC, ZONE);
+      ok(t0.key([0.3, 1.2]) === t0.key([0.3 + CIRC, 1.2]) && t0.key([0.3, 1.2]) === t0.key([0.3 - 2 * CIRC, 1.2]), 'a point and its copies round the tower have the same key');
+      ok(t0.key([-1e-9, 2]) === t0.key([1e-9, 2]) && t0.key([CIRC - 1e-9, 2]) === t0.key([0, 2]), 'points either side of the seam have the same key');
+      ok(near(t0.dx(CIRC - 0.1, 0.2), 0.3) && near(t0.dx(0.2, CIRC - 0.1), -0.3), 'distances are measured the short way round');
+      const s0 = seed(new Tower(CIRC, ZONE), RING);
+      ok([...s0.edgeMap.values()].filter(a => a.length === 2).length === 2, 'the first course closes: its decagons share an edge on each side, one across the seam');
+      ok(s0.fill === 0, 'the fill line starts at the floor');
+      const a = s0.place(TILES.hexagon, 0, CIRC - 0.2, 5), b = s0.place(TILES.hexagon, 0, -0.2, 5);
+      ok(s0.overlaps(a, b) && a.edges.every((e, i) => e.key === b.edges[i].key), 'a tile placed across the seam from either side is the same tile');
+      ok(!s0.overlaps(a, s0.place(TILES.hexagon, 0, CIRC / 2, 5)), 'tiles half a circumference apart do not overlap');
+      // seeded towers: the cached, incremental candidate search against the direct one, and the invariants
+      let rose = 0, saveTiles = null;
+      for (const s of [1, 2, 3, 4]) {
+        const R = rng(s), t = seed(new Tower(CIRC, ZONE), RING), game = 'tower ' + s + ' step ';
+        let last = 0;
+        for (let step = 0; step < 60; step++) {
+          const sets = t.candidateSets();
+          if (step % 10 === 0 || !sets.size) ok(fromTower(t) === direct(t), game + step + ': candidates match the direct search');
+          if (!sets.size) break;
+          // a random tile type, laid where it joins the most edges, lowest first, so the tower tends to rise
+          const ids = [...sets.keys()], id = ids[Math.floor(R() * ids.length)];
+          let pick = null, bs = -Infinity;
+          for (const c of sets.get(id).values()) for (const p of c.placements) {
+            const P = t.place(p.tile, p.r, p.x, p.y), v = 10 * P.edges.filter(e => t.edgeMap.has(e.key)).length - P.y + R() * 1e-3;
+            if (v > bs) { bs = v; pick = P; }
+          }
+          const predicted = t.deadAfter(pick);
+          t.add(pick);
+          t.candidateSets();
+          if (step % 5 === 0) ok(t.deadEdges().length === predicted || t.fill > last, game + step + ': deadAfter predicts the dead edges');
+          ok(t.fill >= last, game + step + ': the fill line never drops');
+          last = t.fill;
+        }
+        if (t.fill > 0) rose++;
+        const T = t.tiles;
+        let overlaps = 0;
+        for (let i = 0; i < T.length; i++) for (let j = i + 1; j < T.length; j++) if (t.overlaps(T[i], T[j])) overlaps++;
+        ok(overlaps === 0, game + 'end: no two tiles overlap, across the seam either');
+        ok([...t.edgeMap.values()].every(arr => arr.length <= 2), game + 'end: no edge is shared by more than two tiles');
+        const area = t.areaBetween(0, t.fill);
+        ok(near(area, CIRC * t.fill, 1e-6), game + 'end: the surface below the fill line is covered (' + area.toFixed(4) + ' of ' + (CIRC * t.fill).toFixed(4) + ')');
+        let bare = 0;
+        for (let x = 0.05; x < CIRC; x += 0.21) for (let y = 0.03; y < t.fill; y += 0.17) if (!t.covered([x, y])) bare++;
+        ok(bare === 0, game + 'end: no bare sample point below the fill line (' + bare + ')');
+        t.candidateSets();
+        ok(t.deadEdges().every(({ e }) => !TILE_IDS.some(id => t.against(TILES[id], e).some(pl => t.fits(pl)))), game + 'end: nothing fits against an edge marked dead');
+        ok(t.oddJoints().every(p => p[1] >= t.fill - 1e-3 && p[1] <= t.top() + 0.5), game + 'end: joints marked for a 108° corner are in the working zone');
+        // as restore() does: rebuild in bulk, then raise the fill line once
+        const again = new Tower(CIRC, ZONE);
+        for (const u of T) again.add(again.place(u.tile, u.r, u.x, u.y), true);
+        again.updateFill();
+        ok(near(again.fill, t.fill) && fromTower(again) === fromTower(t), game + 'end: a rebuilt tower has the same fill line and candidates');
+        if (s === 1) saveTiles = T.map(u => ({ id: u.tile.id, r: u.r, x: u.x, y: u.y }));
+      }
+      ok(rose > 0, 'the fill line rose above the floor in at least one seeded tower');
+      // saves: a real one is accepted, damaged ones are refused
+      const good = { circ: CIRC, zone: ZONE, skips: 2, regenLevel: 0, queue: ['hexagon', 'bowtie', 'decagon'], phase: 'play', rot: 0.5, msg: '', bestBefore: 3.2, tiles: saveTiles };
+      const v = parseSave(JSON.parse(JSON.stringify(good)));
+      ok(v && v.tower.tiles.length === saveTiles.length, 'save: a valid save is accepted and rebuilt');
+      const bad = {
+        'not an object': null, 'title phase': { ...good, phase: 'title' }, 'another circumference': { ...good, circ: 8 },
+        'unknown tile in queue': { ...good, queue: ['star'] }, 'unknown tile': { ...good, tiles: [...good.tiles, { id: 'star', r: 0, x: 1, y: 1 }] },
+        'inherited name as tile': { ...good, tiles: [{ id: 'constructor', r: 0, x: 1, y: 1 }] },
+        'rotation out of range': { ...good, tiles: [{ ...good.tiles[0], r: 10 }] }, 'coordinate not a number': { ...good, tiles: [{ ...good.tiles[0], x: null }] },
+        'overlapping tiles': { ...good, tiles: [...good.tiles, good.tiles[1]] },
+        'overlap across the seam': { ...good, tiles: [...good.tiles, { ...good.tiles[1], x: good.tiles[1].x + CIRC }] },
+        'no tiles': { ...good, tiles: [] }, 'too many set-asides': { ...good, skips: SKIPS + 1 },
+      };
+      for (const name in bad) ok(parseSave(bad[name]) === null, 'save: refuses ' + name);
+    } catch (e) { fails.push('exception during self-test: ' + (e && e.message)); }
+    return { total: n, failures: fails };
+  }
+  // Test contract shared with tools/: set window.portaTestResult before load, then show the result on the page.
+  function runTestsIfRequested() {
+    if (location.hash !== '#test') return;
+    const r = window.portaTestResult = selfTest();
+    let el = $('#test-report');
+    if (!el) { el = document.createElement('div'); el.id = 'test-report'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
+    el.className = r.failures.length ? 'fail' : 'pass';
+    el.textContent = r.failures.length
+      ? 'Self-test: ' + r.failures.length + ' of ' + r.total + ' checks FAILED\n' + r.failures.map(f => '✗ ' + f).join('\n')
+      : 'Self-test: all ' + r.total + ' checks passed';
+    if (r.failures.length) console.error('[minaret] self-test: ' + r.failures.length + ' of ' + r.total + ' checks failed');
+  }
+
+  // ---------- boot ----------
+  best = loadBest();
+  if (loadSave()) { hasSave = true; $('#btn-continue').hidden = false; $('#btn-start').textContent = 'New tower'; }
+  if (reduceMotion.addEventListener) reduceMotion.addEventListener('change', requestDraw);
+  new ResizeObserver(resize).observe($('#boardwrap'));
+  D = 0; // forces the first resize to draw the legend
+  resize();
+  watchDpr();
+  updateHud();
+  runTestsIfRequested();
+  window.addEventListener('hashchange', runTestsIfRequested);
+})();
+</script>
+</body>
+</html>
