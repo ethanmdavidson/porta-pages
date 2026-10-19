@@ -776,7 +776,10 @@
     el.textContent = r.failures.length
       ? 'Self-test: ' + r.failures.length + ' of ' + r.total + ' checks FAILED\n' + r.failures.map((f) => '✗ ' + f).join('\n')
       : 'Self-test: all ' + r.total + ' checks passed';
-    if (r.failures.length) console.error('[workbench] self-test: ' + r.failures.length + ' of ' + r.total + ' checks failed');
+    if (r.failures.length) {
+      console.error('[workbench] self-test: ' + r.failures.length + ' of ' + r.total + ' checks failed');
+      r.failures.forEach((f) => console.error('  ✗ ' + f));
+    }
   }
 
   setUp();
