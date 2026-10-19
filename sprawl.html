@@ -1,0 +1,1191 @@
+<!DOCTYPE html>
+<!--
+  Sprawl
+
+  A turn-based puzzle about a computer virus spreading through a network.
+  You are a shape made of capabilities, living in one machine's memory.
+  Grow by adding capabilities next to your shape, probe the network to
+  find machines, and hop to one before the alert on this one fills up.
+  Land your Core in the Vault to win. Every run is a new network.
+
+  Capabilities:
+    ◆ Core    you. Lose it and the run is over
+    ≡ Thread  +1 cycle every turn
+    ◎ Probe   each one lets a probe see one link farther
+    ↗ Leap    a machine with lock N takes N Leap to hop into
+    ◐ Cloak   each one hides 1 alert every turn
+
+  Machines differ. A router has room for only a few cells, but from a
+  router you probe and hop one link farther. A camera is slow and cramped,
+  but nobody watches it. A server is roomy and fast, but watched closely.
+
+  When you hop, your shape must fit the new machine's memory. Drag to pick
+  where your Core lands, and rotate or flip to fit more of you. Cells that
+  land on used memory or off the edge are lost, and so is anything they
+  were holding on to.
+
+  At the end of each turn, the machine's alert rises by its watch, plus
+  the noise you made, minus your Cloak. If it fills, you are wiped.
+  Security tightens across the network every 10 turns.
+
+  Keyboard: 1 to 3 pick an offer, p probes, n picks the next machine on
+  the map, h hops to it, t trims the picked cell, e ends the turn. While
+  landing, arrows move your Core, r rotates, f flips, enter lands and
+  escape cancels.
+
+  Your best results are saved in localStorage. A run in progress is not.
+
+  Open this file with #test at the end of the URL to run the built-in
+  self-test of the game rules and show the results on the page. The test
+  plays its own games and leaves yours alone.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0a0e13">
+<title>Sprawl</title>
+<style>
+  :root {
+    --bg: #0a0e13; --panel: #111821; --edge: #1f2b39; --ink: #d7e2ec; --dim: #8296a8;
+    --accent: #ff5fa2; --warn: #ff6b5a; --ok: #7be06a;
+    --sat: env(safe-area-inset-top, 0px); --sab: env(safe-area-inset-bottom, 0px);
+    --sal: env(safe-area-inset-left, 0px); --sar: env(safe-area-inset-right, 0px);
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font: 14px/1.4 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    overflow: hidden;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+  button {
+    font: inherit; color: var(--ink); background: #16202b; border: 1px solid var(--edge); border-radius: 5px;
+    padding: 6px 12px; min-height: 44px; cursor: pointer; touch-action: manipulation;
+  }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button.primary { border-color: var(--accent); color: var(--accent); }
+  button.on { background: #22303f; border-color: currentColor; }
+
+  #app {
+    height: 100%; display: flex; flex-direction: column; gap: 8px;
+    padding: calc(var(--sat) + 8px) calc(var(--sar) + 10px) calc(var(--sab) + 8px) calc(var(--sal) + 10px);
+  }
+  header { display: flex; align-items: center; gap: 14px; }
+  h1 { font-size: 18px; letter-spacing: 0.3em; color: var(--accent); font-weight: 600; }
+  #hud { flex: 1; display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--dim); font-variant-numeric: tabular-nums; }
+  #hud b { color: var(--ink); font-weight: 600; }
+  #btn-menu { min-height: 36px; padding: 4px 10px; }
+
+  #stage { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .panel {
+    min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px;
+    background: var(--panel); border: 1px solid var(--edge); border-radius: 6px;
+  }
+  .ptitle { display: flex; justify-content: space-between; gap: 8px; color: var(--dim); font-size: 13px; }
+  .ptitle b { color: var(--ink); font-weight: 600; }
+  .cwrap { flex: 1; min-height: 0; position: relative; }
+  .cwrap canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  #alert { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--dim); }
+  #alert .bar { flex: 1; position: relative; height: 8px; border-radius: 4px; background: #0b1118; overflow: hidden; }
+  #alert i { position: absolute; top: 0; bottom: 0; }
+  #alert-now { left: 0; background: var(--warn); }
+  #alert-next { background: repeating-linear-gradient(45deg, #ff6b5a99 0 3px, transparent 3px 6px); }
+  #alert.danger { color: var(--warn); }
+  #info { font-size: 13px; color: var(--dim); min-height: 3.9em; }
+  #info b { color: var(--ink); font-weight: 600; }
+  #info .why { color: var(--warn); }
+
+  #msg { min-height: 1.4em; text-align: center; color: var(--dim); }
+  #controls { display: flex; flex-wrap: wrap; gap: 6px; justify-content: space-between; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; }
+  #offers button { display: flex; align-items: center; gap: 8px; text-align: left; }
+  #offers .g { font-size: 20px; line-height: 1; }
+  #offers small { display: block; color: var(--dim); font-size: 11px; }
+
+  @media (max-width: 760px), (orientation: portrait) {
+    #app { gap: 6px; }
+    #stage { grid-template-columns: 1fr; grid-template-rows: 5fr 4fr; gap: 6px; }
+    .panel { padding: 6px; gap: 4px; }
+    #info { min-height: 0; }
+    #controls { justify-content: stretch; }
+    .row, #offers { flex: 1 1 100%; }
+    .row button, #offers button { flex: 1; justify-content: center; padding: 4px 6px; }
+  }
+
+  #overlay {
+    position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+    background: rgba(5, 8, 12, 0.82); padding: calc(var(--sat) + 12px) 12px calc(var(--sab) + 12px);
+  }
+  #overlay.show { display: flex; }
+  .sheet {
+    width: 100%; max-width: 520px; max-height: 100%; overflow: auto;
+    background: var(--panel); border: 1px solid var(--edge); border-radius: 8px; padding: 20px;
+  }
+  .sheet [data-view] { display: none; }
+  .sheet [data-view].on { display: block; }
+  .sheet h2 { font-size: 22px; letter-spacing: 0.3em; color: var(--accent); font-weight: 600; }
+  .sheet p, .sheet li { color: var(--dim); margin-top: 8px; }
+  .sheet b { color: var(--ink); font-weight: 600; }
+  .sheet ul { list-style: none; }
+  #legend li { display: flex; gap: 10px; margin-top: 4px; }
+  #legend .g { width: 1.4em; text-align: center; font-size: 16px; }
+  #strains { display: grid; gap: 8px; margin-top: 10px; }
+  #strains button { display: flex; align-items: center; gap: 12px; text-align: left; padding: 8px 12px; }
+  #strains canvas { flex: none; width: 88px; height: 66px; }
+  #strains small { display: block; color: var(--dim); }
+  .sheet .actions { display: flex; gap: 8px; margin-top: 14px; }
+
+  #test-report {
+    position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 10; max-height: 40vh; overflow: auto;
+    padding: 10px 14px; border: 1px solid; background: var(--panel);
+    font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; -webkit-user-select: text; user-select: text;
+  }
+  #test-report.pass { color: #8fd19e; }
+  #test-report.fail { color: #f08a7a; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>SPRAWL</h1>
+    <div id="hud"></div>
+    <button id="btn-menu" type="button">Menu</button>
+  </header>
+  <div id="stage">
+    <section class="panel">
+      <div class="ptitle"><b id="mem-title"></b><span id="mem-note"></span></div>
+      <div class="cwrap"><canvas id="mem" aria-label="Memory of the machine you are in"></canvas></div>
+      <div id="alert"><div class="bar"><i id="alert-now"></i><i id="alert-next"></i></div><span id="alert-text"></span></div>
+    </section>
+    <section class="panel">
+      <div class="ptitle"><b>Network</b><span id="net-note"></span></div>
+      <div class="cwrap"><canvas id="net" aria-label="Network map"></canvas></div>
+      <div id="info"></div>
+    </section>
+  </div>
+  <div id="msg" role="status"></div>
+  <div id="controls">
+    <div class="row" id="offers"></div>
+    <div class="row" id="acts">
+      <button id="btn-probe" type="button">Probe</button>
+      <button id="btn-hop" type="button">Hop</button>
+      <button id="btn-trim" type="button" title="Pick one of your cells, then trim it. Anything only it held on to goes too">Trim</button>
+      <button id="btn-end" type="button" class="primary">End turn</button>
+    </div>
+    <div class="row" id="place-acts" hidden>
+      <button id="btn-rotate" type="button">Rotate</button>
+      <button id="btn-flip" type="button">Flip</button>
+      <button id="btn-cancel" type="button">Cancel</button>
+      <button id="btn-land" type="button" class="primary">Land</button>
+    </div>
+  </div>
+</div>
+
+<div id="overlay" class="show">
+  <div class="sheet">
+    <div data-view="title" class="on">
+      <h2>SPRAWL</h2>
+      <p>You are a virus: a shape made of capabilities, living in a machine's memory. Spread through the network and land your Core in the Vault.</p>
+      <ul>
+        <li><b>Grow</b>: pick an offer, then tap free memory next to you</li>
+        <li><b>Probe</b>: scan the network for machines to hop to</li>
+        <li><b>Hop</b>: move to a probed machine. Whatever doesn't fit its memory is lost</li>
+        <li>At the end of each turn the machine's alert rises. If it fills, you're wiped</li>
+      </ul>
+      <ul id="legend"></ul>
+      <p><b>Pick a strain to start a run</b></p>
+      <div id="strains"></div>
+      <p id="best"></p>
+      <div class="actions"><button id="btn-resume" type="button" class="primary" hidden>Resume run</button></div>
+    </div>
+    <div data-view="end">
+      <h2 id="end-title"></h2>
+      <p id="end-text"></p>
+      <div class="actions"><button id="btn-again" type="button" class="primary">New run</button></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  const $ = s => document.querySelector(s);
+
+  /* ===================== RULES ===================== */
+  const LIMIT = 10;             // alert at which a machine wipes you
+  const SWEEP_EVERY = 10;       // turns between network-wide rises in watch
+  const GROW_NOISE = 1, PROBE_NOISE = 2, PROBE_COST = 1, HOP_COST = 1;
+  const MAX_PROBE = 3;          // Probe cells past this add no range
+  const COLS = 7;               // network columns, from the start to the Vault
+
+  const CAPS = {
+    core:   { name: 'Core',   glyph: '◆', color: '#ff5fa2', cost: 0, desc: 'You. Lose it and the run is over' },
+    thread: { name: 'Thread', glyph: '≡', color: '#f2b33d', cost: 2, desc: '+1 cycle every turn' },
+    probe:  { name: 'Probe',  glyph: '◎', color: '#3fd0e0', cost: 1, desc: 'Each one lets a probe see one link farther' },
+    leap:   { name: 'Leap',   glyph: '↗', color: '#7be06a', cost: 2, desc: 'A machine with lock N takes N Leap to hop into' },
+    cloak:  { name: 'Cloak',  glyph: '◐', color: '#a596ff', cost: 1, desc: 'Each one hides 1 alert every turn' },
+  };
+
+  // block is the share of memory the machine's own software uses. offers weights what it lets you grow.
+  const TYPES = {
+    pc:    { name: 'Workstation', tag: 'PC',  w: 6, h: 5, block: 0.2,  cpu: 2, watch: 1, lock: 1, reach: 0,
+             offers: { thread: 2, probe: 2, leap: 2, cloak: 1 }, blurb: 'Middling at everything' },
+    srv:   { name: 'Server',      tag: 'SRV', w: 8, h: 6, block: 0.25, cpu: 3, watch: 2, lock: 2, reach: 0,
+             offers: { thread: 4, probe: 1, leap: 1, cloak: 1 }, blurb: 'Roomy and fast, but watched closely' },
+    rtr:   { name: 'Router',      tag: 'RTR', w: 3, h: 3, block: 0.12, cpu: 1, watch: 1, lock: 1, reach: 1,
+             offers: { probe: 2, leap: 3 }, blurb: 'Tiny memory, but you probe and hop one link farther from here' },
+    cam:   { name: 'Camera',      tag: 'CAM', w: 4, h: 3, block: 0.15, cpu: 1, watch: 0, lock: 1, reach: 0,
+             offers: { cloak: 3, probe: 1 }, blurb: 'Slow and cramped, but nobody watches it' },
+    phone: { name: 'Phone',       tag: 'PHN', w: 3, h: 6, block: 0.15, cpu: 2, watch: 1, lock: 2, reach: 0,
+             offers: { leap: 2, cloak: 2, probe: 1 }, blurb: 'Tall and narrow, and rich in Leap and Cloak' },
+    fw:    { name: 'Firewall',    tag: 'FW',  w: 5, h: 5, block: 0.3,  cpu: 2, watch: 3, lock: 3, reach: 1,
+             offers: { cloak: 2, leap: 2 }, blurb: 'Locked tight and watched hard, but sees one link farther' },
+    vault: { name: 'Vault',       tag: 'VLT', w: 7, h: 7, block: 0.35, cpu: 0, watch: 0, lock: 4, reach: 0,
+             offers: {}, blurb: 'Your goal. Land your Core here to win' },
+  };
+  const EARLY = { pc: 3, srv: 2, rtr: 2, cam: 2, phone: 2 };
+  const LATE = { pc: 2, srv: 2, rtr: 2, cam: 1, phone: 2, fw: 3 };
+
+  // Each cell is [dx, dy, capability] from the Core.
+  const STRAINS = {
+    needle: { name: 'Needle', blurb: 'A thin line that slips into small machines',
+              cells: [[-1, 0, 'probe'], [0, 0, 'core'], [1, 0, 'leap'], [2, 0, 'probe']] },
+    bloom:  { name: 'Bloom', blurb: 'A square with a Thread, so it starts with more cycles',
+              cells: [[0, 0, 'core'], [1, 0, 'thread'], [0, 1, 'probe'], [1, 1, 'leap']] },
+    shade:  { name: 'Shade', blurb: 'Starts with Cloak, so machines notice it less',
+              cells: [[0, -1, 'cloak'], [-1, 0, 'probe'], [0, 0, 'core'], [1, 0, 'leap']] },
+  };
+
+  const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  const key = (x, y) => x + ',' + y;
+  const plural = (n, word) => n + ' ' + word + (n === 1 ? '' : 's');
+
+  function mulberry32(a) {
+    return () => {
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function pick(R, weights) {
+    const ids = Object.keys(weights);
+    let r = R() * ids.reduce((sum, id) => sum + weights[id], 0);
+    for (const id of ids) if ((r -= weights[id]) < 0) return id;
+    return ids[ids.length - 1];
+  }
+
+  // ---------- memory ----------
+  const isFree = (L, x, y) => x >= 0 && y >= 0 && x < L.w && y < L.h && !L.blocked.has(key(x, y));
+
+  // Free memory is kept in one piece, so no part of it is walled off for good.
+  function makeLayout(w, h, frac, R) {
+    let n = Math.round(w * h * frac);
+    for (let tries = 1; ; tries++) {
+      const blocked = new Set();
+      while (blocked.size < n) blocked.add(key(Math.floor(R() * w), Math.floor(R() * h)));
+      const L = { w, h, blocked };
+      if (freeConnected(L)) return L;
+      if (tries % 20 === 0) n--;
+    }
+  }
+  function freeConnected(L) {
+    const free = [];
+    for (let y = 0; y < L.h; y++) for (let x = 0; x < L.w; x++) if (isFree(L, x, y)) free.push({ x, y });
+    // settle() floods out from the Core, so make one free cell a stand-in Core and see if the flood reaches the rest.
+    return settle(free.map((c, i) => ({ ...c, cap: i ? 'probe' : 'core' })), L).kept.length === free.length;
+  }
+
+  // ---------- shapes ----------
+  // A flip mirrors left to right, then each rot is a quarter turn clockwise.
+  function orient(dx, dy, rot, flip) {
+    if (flip) dx = -dx;
+    for (let i = 0; i < rot; i++) [dx, dy] = [-dy, dx];
+    return [dx, dy];
+  }
+  const coreOf = cells => cells.find(c => c.cap === 'core');
+  function relShape(cells) {
+    const k = coreOf(cells);
+    return cells.map(c => ({ dx: c.x - k.x, dy: c.y - k.y, cap: c.cap }));
+  }
+  function counts(cells) {
+    const n = { core: 0, thread: 0, probe: 0, leap: 0, cloak: 0 };
+    for (const c of cells) n[c.cap]++;
+    return n;
+  }
+
+  // Keeps the cells that sit on free memory and still connect to the Core, with the Core first. Null when the
+  // Core itself has nowhere to sit.
+  function settle(cells, L) {
+    const core = coreOf(cells);
+    if (!core || !isFree(L, core.x, core.y)) return null;
+    const at = new Map();
+    for (const c of cells) if (isFree(L, c.x, c.y)) at.set(key(c.x, c.y), c);
+    const seen = new Set([core]), kept = [], stack = [core];
+    while (stack.length) {
+      const c = stack.pop();
+      kept.push(c);
+      for (const [dx, dy] of DIRS) {
+        const next = at.get(key(c.x + dx, c.y + dy));
+        if (next && !seen.has(next)) { seen.add(next); stack.push(next); }
+      }
+    }
+    return { kept, lost: cells.filter(c => !seen.has(c)) };
+  }
+  function land(rel, L, x, y, rot, flip) {
+    return settle(rel.map(c => {
+      const [dx, dy] = orient(c.dx, c.dy, rot, flip);
+      return { x: x + dx, y: y + dy, cap: c.cap };
+    }), L);
+  }
+  // The free cell nearest the middle, where a landing starts before you move it.
+  function middleSpot(L) {
+    let best = null;
+    for (let y = 0; y < L.h; y++) for (let x = 0; x < L.w; x++) {
+      const d = Math.hypot(x - (L.w - 1) / 2, y - (L.h - 1) / 2);
+      if (isFree(L, x, y) && (!best || d < best.d)) best = { x, y, d };
+    }
+    return best;
+  }
+  // The landing that keeps the most cells, with the Core nearest the middle on a tie.
+  function bestFit(rel, L) {
+    let best = null;
+    for (let rot = 0; rot < 4; rot++) for (const flip of [false, true]) {
+      for (let y = 0; y < L.h; y++) for (let x = 0; x < L.w; x++) {
+        if (!isFree(L, x, y)) continue;
+        const r = land(rel, L, x, y, rot, flip), score = r.kept.length * 1000 - Math.hypot(x - (L.w - 1) / 2, y - (L.h - 1) / 2);
+        if (!best || score > best.score) best = { score, rot, flip, x, y, kept: r.kept, lost: r.lost };
+      }
+    }
+    return best;
+  }
+
+  // ---------- network ----------
+  // Columns run from the start machine to the Vault. Links join neighbouring columns, and sometimes machines in the
+  // same column. Routers link to every machine in the columns on either side.
+  function makeNetwork(seed) {
+    const R = mulberry32(seed);
+    const plan = [];
+    for (let c = 0; c < COLS; c++) {
+      if (c === 0) plan.push(['pc']);
+      else if (c === COLS - 1) plan.push(['vault']);
+      else plan.push(Array.from({ length: R() < 0.5 ? 2 : 3 }, () => pick(R, c < COLS - 3 ? EARLY : LATE)));
+    }
+    if (!plan.some(col => col.includes('rtr'))) {
+      const col = plan[1 + Math.floor(R() * (COLS - 2))];
+      col[Math.floor(R() * col.length)] = 'rtr';
+    }
+    const nodes = [];
+    const cols = plan.map((types, c) => types.map((type, i) => {
+      const t = TYPES[type];
+      const node = {
+        id: nodes.length, type, col: c,
+        row: types.length === 1 ? 0.5 : Math.min(0.95, Math.max(0.05, (i + 0.5) / types.length + (R() - 0.5) * 0.15)),
+        // The start has less in the way, so every strain fits it whole.
+        layout: makeLayout(t.w, t.h, c === 0 ? 0.1 : t.block, R),
+        offers: Object.keys(t.offers).length ? [0, 1, 2].map(() => pick(R, t.offers)) : [],
+        alert: 0, known: false, visited: false,
+      };
+      nodes.push(node);
+      return node;
+    }));
+    const adj = nodes.map(() => new Set());
+    const link = (a, b) => { adj[a.id].add(b.id); adj[b.id].add(a.id); };
+    const nearest = (list, row) => list.reduce((m, n) => Math.abs(n.row - row) < Math.abs(m.row - row) ? n : m);
+    for (let c = 0; c + 1 < COLS; c++) {
+      const A = cols[c], B = cols[c + 1];
+      for (const a of A) link(a, nearest(B, a.row));
+      for (const b of B) if (!A.some(a => adj[a.id].has(b.id))) link(nearest(A, b.row), b);
+      if (A.length > 1 && B.length > 1 && R() < 0.6) link(A[Math.floor(R() * A.length)], B[Math.floor(R() * B.length)]);
+    }
+    for (const col of cols) for (let i = 0; i + 1 < col.length; i++) if (R() < 0.35) link(col[i], col[i + 1]);
+    for (const n of nodes) if (n.type === 'rtr') for (const m of nodes) if (Math.abs(m.col - n.col) === 1) link(n, m);
+    return { nodes, adj: adj.map(s => [...s].sort((a, b) => a - b)) };
+  }
+  // Link counts from a machine, out to max links away.
+  function distances(net, from, max) {
+    const d = new Map([[from, 0]]), queue = [from];
+    for (let i = 0; i < queue.length; i++) {
+      const u = queue[i];
+      if (d.get(u) >= max) continue;
+      for (const v of net.adj[u]) if (!d.has(v)) { d.set(v, d.get(u) + 1); queue.push(v); }
+    }
+    return d;
+  }
+
+  // ---------- a run ----------
+  const here = s => s.net.nodes[s.at];
+  const sweeps = s => Math.floor((s.turn - 1) / SWEEP_EVERY);
+  const watchOf = (s, node) => TYPES[node.type].watch + sweeps(s);
+  const alertGain = s => Math.max(0, watchOf(s, here(s)) + s.noise - counts(s.cells).cloak);
+  const probeRange = s => Math.min(counts(s.cells).probe, MAX_PROBE) + TYPES[here(s).type].reach;
+  const hopRange = s => 1 + TYPES[here(s).type].reach;
+  const visitedCount = s => s.net.nodes.filter(n => n.visited).length;
+
+  function newRun(seed, strain) {
+    const net = makeNetwork(seed), start = net.nodes[0];
+    const rel = STRAINS[strain].cells.map(([dx, dy, cap]) => ({ dx, dy, cap }));
+    const s = { seed, strain, net, at: 0, cells: bestFit(rel, start.layout).kept, turn: 1, cycles: 0, noise: 0, phase: 'play', R: mulberry32(seed + 1) };
+    start.visited = start.known = true;
+    for (const id of net.adj[0]) net.nodes[id].known = true;
+    startTurn(s);
+    return s;
+  }
+  function startTurn(s) {
+    s.cycles = TYPES[here(s).type].cpu + counts(s.cells).thread;
+    s.noise = 0;
+  }
+  // Returns news of a sweep, if this turn brings one.
+  function nextTurn(s) {
+    s.turn++;
+    startTurn(s);
+    return (s.turn - 1) % SWEEP_EVERY === 0 ? 'Security tightens: watch +1 everywhere' : '';
+  }
+  const sentences = (...parts) => parts.filter(Boolean).join('. ');
+
+  // Each action has a check that returns why it can't be done, or '' when it can.
+  function growError(s, i, x, y) {
+    const node = here(s), cap = node.offers[i];
+    if (!cap) return 'Nothing on offer here';
+    if (s.cycles < CAPS[cap].cost) return CAPS[cap].name + ' costs ' + plural(CAPS[cap].cost, 'cycle') + ' and you have ' + s.cycles;
+    if (!isFree(node.layout, x, y)) return 'That memory is in use';
+    if (s.cells.some(c => c.x === x && c.y === y)) return 'You are already there';
+    if (!s.cells.some(c => Math.abs(c.x - x) + Math.abs(c.y - y) === 1)) return 'Grow next to your shape';
+    return '';
+  }
+  function grow(s, i, x, y) {
+    const node = here(s), cap = node.offers[i];
+    s.cells.push({ x, y, cap });
+    s.cycles -= CAPS[cap].cost;
+    s.noise += GROW_NOISE;
+    node.offers[i] = pick(s.R, TYPES[node.type].offers);
+    return 'Grew ' + CAPS[cap].name;
+  }
+
+  function trimError(s, x, y) {
+    const c = s.cells.find(c => c.x === x && c.y === y);
+    if (!c) return 'Pick one of your cells to trim';
+    if (c.cap === 'core') return "You can't trim your Core";
+    return '';
+  }
+  function trim(s, x, y) {
+    const before = s.cells.length;
+    s.cells = settle(s.cells.filter(c => c.x !== x || c.y !== y), here(s).layout).kept;
+    return 'Dropped ' + plural(before - s.cells.length, 'cell');
+  }
+
+  function probeError(s) {
+    if (!counts(s.cells).probe) return 'You need a Probe to scan';
+    if (s.cycles < PROBE_COST) return 'No cycles left this turn';
+    return '';
+  }
+  function probe(s) {
+    s.cycles -= PROBE_COST;
+    s.noise += PROBE_NOISE;
+    let found = 0;
+    for (const id of distances(s.net, s.at, probeRange(s)).keys()) {
+      const n = s.net.nodes[id];
+      if (!n.known) { n.known = true; found++; }
+    }
+    return found ? 'Probe found ' + plural(found, 'machine') : 'Probe found nothing new';
+  }
+
+  function hopError(s, id) {
+    const t = s.net.nodes[id], lock = TYPES[t.type].lock, leap = counts(s.cells).leap;
+    if (id === s.at) return 'You are here';
+    if (!t.known) return 'Probe it first';
+    if (!distances(s.net, s.at, hopRange(s)).has(id)) return 'Out of reach. From here you can hop ' + plural(hopRange(s), 'link');
+    // Without this, hopping back and forth every turn would dodge every wipe.
+    if (t.alert >= LIMIT) return 'Its alert is full, so it has locked you out';
+    if (leap < lock) return 'Lock ' + lock + ' takes ' + lock + ' Leap, and you have ' + leap;
+    if (s.cycles < HOP_COST) return 'Hopping takes a spare cycle';
+    return '';
+  }
+  // Hopping ends your turn. The alert from it lands on the machine you leave, which remembers it.
+  function hop(s, id, p) {
+    const from = here(s), to = s.net.nodes[id];
+    const r = land(relShape(s.cells), to.layout, p.x, p.y, p.rot, p.flip);
+    from.alert = Math.min(LIMIT, from.alert + alertGain(s));
+    s.at = id;
+    s.cells = r.kept;
+    to.visited = to.known = true;
+    if (to.type === 'vault') { s.phase = 'won'; return 'You made it into the Vault'; }
+    const landed = 'Landed on the ' + TYPES[to.type].name + (r.lost.length ? '' : ', whole');
+    return sentences(landed, r.lost.length && 'Lost ' + r.lost.map(c => CAPS[c.cap].name).join(', '), nextTurn(s));
+  }
+
+  function endTurn(s) {
+    const node = here(s), gain = alertGain(s);
+    node.alert = Math.min(LIMIT, node.alert + gain);
+    if (node.alert >= LIMIT) { s.phase = 'over'; return 'The ' + TYPES[node.type].name + ' found you and wiped you'; }
+    return sentences('Alert +' + gain, nextTurn(s));
+  }
+
+  /* ===================== INTERFACE ===================== */
+  const ui = { mode: 'idle', offer: -1, trim: null, sel: -1, place: null };
+  let S = null;
+  const say = text => { $('#msg').textContent = text; };
+
+  // ---------- drawing ----------
+  const memCv = $('#mem'), netCv = $('#net');
+  let frameReq = 0;
+  const requestDraw = () => { if (!frameReq) frameReq = requestAnimationFrame(() => { frameReq = 0; drawMemory(); drawNetwork(); }); };
+
+  function sizeCanvas(cv) {
+    const r = cv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+    const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    const c = cv.getContext('2d');
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.clearRect(0, 0, r.width, r.height);
+    return { c, W: r.width, H: r.height };
+  }
+
+  function drawCap(c, px, py, s, cap, style) {
+    const m = Math.max(1.5, s * 0.07), color = style === 'lost' ? '#ff6b5a' : CAPS[cap].color, solid = cap === 'core' && style !== 'lost';
+    c.save();
+    if (style === 'ghost') c.globalAlpha = 0.6;
+    c.beginPath();
+    c.roundRect(px + m, py + m, s - 2 * m, s - 2 * m, s * 0.16);
+    c.fillStyle = solid ? color : color + '30';
+    c.fill();
+    c.lineWidth = Math.max(1, s * 0.05);
+    c.strokeStyle = color;
+    c.stroke();
+    c.fillStyle = solid ? '#0a0e13' : color;
+    c.font = '600 ' + Math.round(s * 0.5) + 'px system-ui, sans-serif';
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.fillText(CAPS[cap].glyph, px + s / 2, py + s / 2 + 1);
+    c.restore();
+  }
+  // Bridges between touching cells show that they are one body.
+  function drawBody(c, g, cells, style) {
+    const at = new Set(cells.map(k => key(k.x, k.y)));
+    c.fillStyle = style === 'lost' ? '#ff6b5a40' : '#ffffff30';
+    for (const k of cells) {
+      if (at.has(key(k.x + 1, k.y))) c.fillRect(g.ox + (k.x + 0.88) * g.s, g.oy + (k.y + 0.35) * g.s, g.s * 0.24, g.s * 0.3);
+      if (at.has(key(k.x, k.y + 1))) c.fillRect(g.ox + (k.x + 0.35) * g.s, g.oy + (k.y + 0.88) * g.s, g.s * 0.3, g.s * 0.24);
+    }
+    for (const k of cells) drawCap(c, g.ox + k.x * g.s, g.oy + k.y * g.s, g.s, k.cap, style);
+  }
+
+  function memGeom(L, W, H) {
+    const s = Math.max(4, Math.min((W - 12) / L.w, (H - 12) / L.h, 72));
+    return { s, ox: (W - s * L.w) / 2, oy: (H - s * L.h) / 2 };
+  }
+  const memNode = () => ui.mode === 'place' ? S.net.nodes[ui.place.id] : here(S);
+  const placing = () => land(relShape(S.cells), memNode().layout, ui.place.x, ui.place.y, ui.place.rot, ui.place.flip);
+
+  function drawMemory() {
+    const { c, W, H } = sizeCanvas(memCv);
+    if (!S) return;
+    const L = memNode().layout, g = memGeom(L, W, H);
+    for (let y = 0; y < L.h; y++) for (let x = 0; x < L.w; x++) {
+      const px = g.ox + x * g.s, py = g.oy + y * g.s;
+      if (isFree(L, x, y)) {
+        c.fillStyle = '#0f1620';
+        c.fillRect(px, py, g.s, g.s);
+        c.strokeStyle = '#1a2532';
+        c.lineWidth = 1;
+        c.strokeRect(px + 0.5, py + 0.5, g.s - 1, g.s - 1);
+      } else {
+        c.fillStyle = '#06090d';
+        c.fillRect(px, py, g.s, g.s);
+        c.strokeStyle = '#1a232e';
+        c.beginPath();
+        for (let i = 0.25; i < 1; i += 0.25) { c.moveTo(px + i * g.s, py); c.lineTo(px, py + i * g.s); c.moveTo(px + g.s, py + i * g.s); c.lineTo(px + i * g.s, py + g.s); }
+        c.stroke();
+      }
+    }
+    if (ui.mode === 'place') {
+      const r = placing();
+      drawBody(c, g, r.kept, 'ghost');
+      drawBody(c, g, r.lost, 'lost');
+      return;
+    }
+    if (ui.mode === 'grow') {
+      const color = CAPS[here(S).offers[ui.offer]].color;
+      c.save();
+      c.setLineDash([4, 3]);
+      c.lineWidth = 2;
+      c.strokeStyle = color;
+      for (let y = 0; y < L.h; y++) for (let x = 0; x < L.w; x++) {
+        if (isFree(L, x, y) && !S.cells.some(k => k.x === x && k.y === y) && S.cells.some(k => Math.abs(k.x - x) + Math.abs(k.y - y) === 1)) {
+          c.strokeRect(g.ox + x * g.s + 4, g.oy + y * g.s + 4, g.s - 8, g.s - 8);
+        }
+      }
+      c.restore();
+    }
+    if (ui.mode === 'trim') {
+      const kept = settle(S.cells.filter(k => k.x !== ui.trim.x || k.y !== ui.trim.y), L).kept;
+      drawBody(c, g, kept);
+      drawBody(c, g, S.cells.filter(k => !kept.includes(k)), 'lost');
+      return;
+    }
+    drawBody(c, g, S.cells);
+  }
+
+  const visible = (s, n) => n.known || n.type === 'vault' || s.net.adj[n.id].some(id => s.net.nodes[id].visited);
+  function netGeom(W, H) {
+    const px = 28, py = 24;
+    return {
+      pos: n => [px + n.col / (COLS - 1) * (W - 2 * px), py + n.row * (H - 2 * py)],
+      r: Math.max(11, Math.min(20, Math.min(W / COLS, H / 3) * 0.22)),
+    };
+  }
+  function drawNetwork() {
+    const { c, W, H } = sizeCanvas(netCv);
+    if (!S) return;
+    const g = netGeom(W, H), nodes = S.net.nodes;
+    c.lineWidth = 2;
+    for (const a of nodes) for (const id of S.net.adj[a.id]) {
+      const b = nodes[id];
+      if (a.id > b.id || !visible(S, a) || !visible(S, b)) continue;
+      const [x1, y1] = g.pos(a), [x2, y2] = g.pos(b);
+      c.strokeStyle = a.id === S.at || b.id === S.at ? '#3b5269' : '#1f2b39';
+      c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2); c.stroke();
+    }
+    for (const n of nodes) {
+      if (!visible(S, n)) continue;
+      const [x, y] = g.pos(n), t = TYPES[n.type];
+      c.beginPath();
+      // The Vault is square, so it never looks like a machine you are in.
+      if (n.type === 'vault') c.roundRect(x - g.r, y - g.r, 2 * g.r, 2 * g.r, g.r * 0.25);
+      else c.arc(x, y, g.r, 0, Math.PI * 2);
+      c.fillStyle = n.id === S.at ? '#3a1830' : n.visited ? '#1a2836' : n.known ? '#131d28' : '#0c1218';
+      c.fill();
+      c.lineWidth = 1.5;
+      c.strokeStyle = n.type === 'vault' ? '#d7e2ec' : '#2c3d50';
+      c.stroke();
+      if (n.alert) {
+        c.beginPath(); c.arc(x, y, g.r + 3, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * n.alert / LIMIT);
+        c.lineWidth = 3; c.strokeStyle = '#ff6b5a'; c.stroke();
+      }
+      const ring = (rad, color, dash) => {
+        c.save(); c.setLineDash(dash || []); c.beginPath(); c.arc(x, y, rad, 0, Math.PI * 2);
+        c.lineWidth = 2; c.strokeStyle = color; c.stroke(); c.restore();
+      };
+      if (n.id === S.at) ring(g.r + 7, '#ff5fa2');
+      else if (!hopError(S, n.id)) ring(g.r + 7, '#7be06a', [4, 3]);
+      if (n.id === ui.sel) ring(g.r + 11, '#d7e2ec');
+      c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.fillStyle = n.known ? '#d7e2ec' : '#8296a8';
+      c.font = '600 ' + Math.round(g.r * (t.tag.length > 2 ? 0.62 : 0.75)) + 'px ui-monospace, Menlo, monospace';
+      c.fillText(n.known || n.type === 'vault' ? t.tag : '?', x, y + 1);
+      if (n.known) {
+        c.fillStyle = CAPS.leap.color;
+        c.font = Math.round(g.r * 0.6) + 'px ui-monospace, Menlo, monospace';
+        c.fillText('↗' + t.lock, x, y + g.r + 19);
+      }
+    }
+  }
+
+  // ---------- panels and buttons ----------
+  function capsLine(n) {
+    return Object.keys(CAPS).map(id => '<span style="color:' + CAPS[id].color + '">' + CAPS[id].glyph + '</span><b>' + n[id] + '</b>').join(' ');
+  }
+  function refresh() {
+    if (!S) return;
+    const node = here(S), t = TYPES[node.type], n = counts(S.cells), gain = alertGain(S), place = ui.mode === 'place';
+    $('#hud').innerHTML = '<span>Turn <b>' + S.turn + '</b></span><span>Cycles <b>' + S.cycles + '</b></span><span>' + capsLine(n) + '</span>';
+
+    if (place) {
+      const to = S.net.nodes[ui.place.id], r = placing();
+      $('#mem-title').textContent = 'Landing on the ' + TYPES[to.type].name;
+      $('#mem-note').textContent = r.lost.length ? 'loses ' + r.lost.length + ' of ' + S.cells.length : 'fits whole';
+    } else {
+      $('#mem-title').textContent = t.name;
+      $('#mem-note').textContent = 'CPU ' + t.cpu + ' · watch ' + watchOf(S, node) + (t.reach ? ' · reach +' + t.reach : '');
+    }
+    const shown = place ? S.net.nodes[ui.place.id] : node;
+    $('#alert-now').style.width = (shown.alert / LIMIT * 100) + '%';
+    $('#alert-next').style.left = (shown.alert / LIMIT * 100) + '%';
+    $('#alert-next').style.width = place ? '0' : (Math.min(gain, LIMIT - node.alert) / LIMIT * 100) + '%';
+    const doomed = !place && node.alert + gain >= LIMIT;
+    $('#alert').classList.toggle('danger', doomed);
+    $('#alert-text').textContent = 'Alert ' + shown.alert + '/' + LIMIT + (place ? '' : ' (+' + gain + ')') + (doomed ? ' — hop or be wiped' : '');
+    $('#net-note').textContent = 'probe ' + probeRange(S) + ' · hop ' + hopRange(S) + (sweeps(S) ? ' · watch +' + sweeps(S) : '');
+
+    const id = ui.sel >= 0 ? ui.sel : S.at, info = $('#info'), sel = S.net.nodes[id], st = TYPES[sel.type];
+    info.textContent = '';
+    const line = (text, cls) => { const d = document.createElement('div'); d.textContent = text; if (cls) d.className = cls; info.appendChild(d); return d; };
+    if (!sel.known) {
+      line(sel.type === 'vault' ? 'The Vault' : 'Unknown machine');
+      line(sel.type === 'vault' ? st.blurb + '. Probe it to see inside' : 'Probe to see what it is');
+    } else {
+      const free = sel.layout.w * sel.layout.h - sel.layout.blocked.size;
+      const head = line(st.name + (id === S.at ? ' (you are here)' : ''));
+      head.style.color = 'var(--ink)';
+      line('Memory ' + sel.layout.w + '×' + sel.layout.h + ' (' + free + ' free) · lock ' + st.lock + ' · watch ' + watchOf(S, sel) + ' · alert ' + sel.alert + '/' + LIMIT);
+      line(st.blurb);
+    }
+    if (id !== S.at) {
+      const why = hopError(S, id);
+      line(why ? "Can't hop: " + why : 'Ready to hop. Tap it again or press Hop', why ? 'why' : '');
+    }
+
+    const offers = $('#offers');
+    offers.textContent = '';
+    offers.hidden = place || !node.offers.length;
+    node.offers.forEach((cap, i) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = ui.mode === 'grow' && ui.offer === i ? 'on' : '';
+      b.style.color = CAPS[cap].color;
+      b.disabled = S.cycles < CAPS[cap].cost;
+      b.title = CAPS[cap].desc;
+      b.innerHTML = '<span class="g">' + CAPS[cap].glyph + '</span><span>' + CAPS[cap].name + '<small>' + plural(CAPS[cap].cost, 'cycle') + '</small></span>';
+      b.addEventListener('click', () => chooseOffer(i));
+      offers.appendChild(b);
+    });
+    $('#acts').hidden = place;
+    $('#place-acts').hidden = !place;
+    $('#btn-probe').disabled = !!probeError(S);
+    $('#btn-probe').title = probeError(S) || 'Reveal machines up to ' + plural(probeRange(S), 'link') + ' away';
+    $('#btn-hop').disabled = ui.sel < 0 || !!hopError(S, ui.sel);
+    $('#btn-trim').disabled = ui.mode !== 'trim';
+    requestDraw();
+  }
+
+  // ---------- actions ----------
+  function after(text) {
+    say(text);
+    if (S.phase !== 'play') showEnd();
+    refresh();
+  }
+  function idle() { ui.mode = 'idle'; ui.offer = -1; ui.trim = null; ui.place = null; }
+  function chooseOffer(i) {
+    if (ui.mode === 'grow' && ui.offer === i) { idle(); say(''); }
+    else { idle(); ui.mode = 'grow'; ui.offer = i; say('Tap a free cell next to you to grow ' + CAPS[here(S).offers[i]].name); }
+    refresh();
+  }
+  function tapMemory(x, y) {
+    if (ui.mode === 'grow') {
+      const why = growError(S, ui.offer, x, y);
+      if (why) return after(why);
+      const text = grow(S, ui.offer, x, y);
+      idle();
+      return after(text);
+    }
+    if (trimError(S, x, y)) { idle(); return after(''); }
+    if (ui.mode === 'trim' && ui.trim.x === x && ui.trim.y === y) { idle(); return after(''); }
+    idle();
+    ui.mode = 'trim';
+    ui.trim = { x, y };
+    after('Trim drops the cells shown in red');
+  }
+  function doTrim() {
+    if (ui.mode !== 'trim') return;
+    const text = trim(S, ui.trim.x, ui.trim.y);
+    idle();
+    after(text);
+  }
+  function doProbe() {
+    const why = probeError(S);
+    if (!why) idle();
+    after(why || probe(S));
+  }
+  function startHop() {
+    const why = ui.sel < 0 ? 'Pick a machine on the map first' : hopError(S, ui.sel);
+    if (why) return after(why);
+    // Fitting yourself in is the puzzle, so the landing starts in the middle rather than at the best fit.
+    const spot = middleSpot(S.net.nodes[ui.sel].layout), id = ui.sel;
+    idle();
+    ui.mode = 'place';
+    ui.place = { id, rot: 0, flip: false, x: spot.x, y: spot.y };
+    after('Drag to choose where your Core lands. Rotate or flip to keep more of you');
+  }
+  function moveCore(x, y) {
+    if (!isFree(memNode().layout, x, y)) return;
+    if (x === ui.place.x && y === ui.place.y) return;
+    ui.place.x = x;
+    ui.place.y = y;
+    refresh();
+  }
+  function turnShape(rot, flip) {
+    ui.place.rot = (ui.place.rot + rot) % 4;
+    ui.place.flip = ui.place.flip !== flip;
+    refresh();
+  }
+  function doLand() {
+    const id = ui.place.id, text = hop(S, id, ui.place);
+    idle();
+    ui.sel = -1;
+    after(text);
+  }
+  function doEnd() {
+    idle();
+    after(endTurn(S));
+  }
+
+  // ---------- input ----------
+  function memCellAt(e) {
+    const r = memCv.getBoundingClientRect(), L = memNode().layout, g = memGeom(L, r.width, r.height);
+    const x = Math.floor((e.clientX - r.left - g.ox) / g.s), y = Math.floor((e.clientY - r.top - g.oy) / g.s);
+    return x >= 0 && y >= 0 && x < L.w && y < L.h ? { x, y } : null;
+  }
+  let dragging = false;
+  memCv.addEventListener('pointerdown', e => {
+    if (!S || S.phase !== 'play') return;
+    const p = memCellAt(e);
+    if (ui.mode === 'place') {
+      dragging = true;
+      memCv.setPointerCapture(e.pointerId);
+      if (p) moveCore(p.x, p.y);
+    } else if (p) tapMemory(p.x, p.y);
+  });
+  memCv.addEventListener('pointermove', e => {
+    if (!dragging || ui.mode !== 'place') return;
+    const p = memCellAt(e);
+    if (p) moveCore(p.x, p.y);
+  });
+  const stopDrag = () => { dragging = false; };
+  memCv.addEventListener('pointerup', stopDrag);
+  memCv.addEventListener('pointercancel', stopDrag);
+
+  netCv.addEventListener('pointerdown', e => {
+    if (!S || S.phase !== 'play' || ui.mode === 'place') return;
+    const r = netCv.getBoundingClientRect(), g = netGeom(r.width, r.height);
+    let best = -1, bestD = Infinity;
+    for (const n of S.net.nodes) {
+      if (!visible(S, n)) continue;
+      const [x, y] = g.pos(n), d = Math.hypot(x - (e.clientX - r.left), y - (e.clientY - r.top));
+      if (d < bestD) { bestD = d; best = n.id; }
+    }
+    if (bestD > g.r * 1.8) best = -1;
+    if (best >= 0 && best === ui.sel && !hopError(S, best)) return startHop();
+    ui.sel = best === S.at ? -1 : best;
+    refresh();
+  });
+
+  function selectNext() {
+    const ids = S.net.nodes.filter(n => visible(S, n) && n.id !== S.at).map(n => n.id);
+    // Machines you can hop to come first.
+    ids.sort((a, b) => (hopError(S, a) ? 1 : 0) - (hopError(S, b) ? 1 : 0) || a - b);
+    ui.sel = ids[(ids.indexOf(ui.sel) + 1) % ids.length];
+    refresh();
+  }
+
+  $('#btn-probe').addEventListener('click', doProbe);
+  $('#btn-hop').addEventListener('click', startHop);
+  $('#btn-trim').addEventListener('click', doTrim);
+  $('#btn-end').addEventListener('click', doEnd);
+  $('#btn-rotate').addEventListener('click', () => turnShape(1, false));
+  $('#btn-flip').addEventListener('click', () => turnShape(0, true));
+  $('#btn-cancel').addEventListener('click', () => { idle(); after(''); });
+  $('#btn-land').addEventListener('click', doLand);
+
+  const focusedButton = e => e.target instanceof Element && e.target.closest('button');
+  window.addEventListener('keydown', e => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const k = e.key;
+    // a focused button acts on Enter and Space by itself
+    if ((k === 'Enter' || k === ' ') && focusedButton(e)) return;
+    if (overlay.classList.contains('show')) {
+      if (k === 'Escape' && S && S.phase === 'play') hideOverlay();
+      if (k === 'Enter' && $('[data-view="end"]').classList.contains('on')) $('#btn-again').click();
+      return;
+    }
+    if (!S || S.phase !== 'play' || e.repeat) return;
+    if (ui.mode === 'place') {
+      const step = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[k];
+      if (step) { e.preventDefault(); moveCore(ui.place.x + step[0], ui.place.y + step[1]); }
+      else if (k === 'r' || k === 'R') turnShape(1, false);
+      else if (k === 'f' || k === 'F') turnShape(0, true);
+      else if (k === 'Enter') { e.preventDefault(); doLand(); }
+      else if (k === 'Escape') { idle(); after(''); }
+      return;
+    }
+    if (k >= '1' && k <= '3' && here(S).offers[k - 1]) chooseOffer(k - 1);
+    else if (k === 'p' || k === 'P') doProbe();
+    else if (k === 'n' || k === 'N') selectNext();
+    else if (k === 'h' || k === 'H') startHop();
+    else if (k === 't' || k === 'T') doTrim();
+    else if (k === 'e' || k === 'E') doEnd();
+    else if (k === 'Escape') { idle(); ui.sel = -1; after(''); }
+  });
+
+  // ---------- title, end and best results ----------
+  const overlay = $('#overlay');
+  const BEST_KEY = 'sprawl.best';
+  const whole = v => Number.isFinite(v) && v >= 0 ? Math.floor(v) : 0;
+  function loadBest() {
+    try {
+      const b = JSON.parse(localStorage.getItem(BEST_KEY));
+      if (b && typeof b === 'object') return { wins: whole(b.wins), fastest: whole(b.fastest), most: whole(b.most) };
+    } catch (e) { /* no saved results, or unreadable ones */ }
+    return { wins: 0, fastest: 0, most: 0 };
+  }
+  function saveBest(b) {
+    try { localStorage.setItem(BEST_KEY, JSON.stringify(b)); } catch (e) { /* storage is off, so results last this visit only */ }
+  }
+  function showBest() {
+    const b = loadBest();
+    $('#best').textContent = b.most
+      ? 'Best: ' + plural(b.wins, 'win') + (b.fastest ? ', fastest in ' + plural(b.fastest, 'turn') : '') + ', most machines in a run ' + b.most
+      : '';
+  }
+  function show(view) {
+    for (const v of overlay.querySelectorAll('[data-view]')) v.classList.toggle('on', v.dataset.view === view);
+    overlay.classList.add('show');
+  }
+  function hideOverlay() { overlay.classList.remove('show'); refresh(); }
+  function showTitle() {
+    showBest();
+    $('#btn-resume').hidden = !(S && S.phase === 'play');
+    show('title');
+  }
+  function showEnd() {
+    const won = S.phase === 'won', n = visitedCount(S), b = loadBest();
+    b.most = Math.max(b.most, n);
+    if (won) { b.wins++; b.fastest = b.fastest ? Math.min(b.fastest, S.turn) : S.turn; }
+    saveBest(b);
+    $('#end-title').textContent = won ? 'IN THE VAULT' : 'WIPED';
+    $('#end-text').textContent = (won ? 'You reached the Vault on turn ' + S.turn : 'The ' + TYPES[here(S).type].name + "'s alert filled on turn " + S.turn)
+      + ', after reaching ' + plural(n, 'machine') + '. Network seed ' + S.seed + '.';
+    show('end');
+  }
+  function start(strain) {
+    S = newRun(Math.floor(Math.random() * 2 ** 31), strain);
+    idle();
+    ui.sel = -1;
+    hideOverlay();
+    say('Grow, probe, then hop before the alert fills');
+  }
+
+  for (const id in CAPS) {
+    const li = document.createElement('li');
+    li.innerHTML = '<span class="g" style="color:' + CAPS[id].color + '">' + CAPS[id].glyph + '</span><span><b>' + CAPS[id].name + '</b> ' + CAPS[id].desc + '</span>';
+    $('#legend').appendChild(li);
+  }
+  for (const id in STRAINS) {
+    const st = STRAINS[id], b = document.createElement('button'), cv = document.createElement('canvas');
+    b.type = 'button';
+    b.appendChild(cv);
+    b.insertAdjacentHTML('beforeend', '<span><b>' + st.name + '</b><small>' + st.blurb + '</small></span>');
+    b.addEventListener('click', () => start(id));
+    $('#strains').appendChild(b);
+    const dpr = window.devicePixelRatio || 1, c = cv.getContext('2d');
+    cv.width = 88 * dpr; cv.height = 66 * dpr;
+    c.scale(dpr, dpr);
+    const xs = st.cells.map(k => k[0]), ys = st.cells.map(k => k[1]), s = 20;
+    const w = Math.max(...xs) - Math.min(...xs) + 1, h = Math.max(...ys) - Math.min(...ys) + 1;
+    const g = { s, ox: (88 - w * s) / 2 - Math.min(...xs) * s, oy: (66 - h * s) / 2 - Math.min(...ys) * s };
+    drawBody(c, g, st.cells.map(([x, y, cap]) => ({ x, y, cap })));
+  }
+  $('#btn-menu').addEventListener('click', showTitle);
+  $('#btn-resume').addEventListener('click', hideOverlay);
+  $('#btn-again').addEventListener('click', showTitle);
+
+  /* ===================== SELF TEST (runs only with #test) ===================== */
+  // Plays its own seeded games through the same rules. It never touches the run in progress or the saved results.
+  function selfTest() {
+    const fails = [];
+    let n = 0;
+    const ok = (cond, name) => { n++; if (!cond) fails.push(name); };
+    const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+    const spots = cells => cells.map(c => key(c.x, c.y)).sort();
+    // Checks that hold after every action in any game.
+    const sound = (s, label) => {
+      const L = here(s).layout, k = counts(s.cells);
+      ok(k.core === 1, label + ': exactly one Core');
+      ok(s.cells.every(c => isFree(L, c.x, c.y)), label + ': every cell is on free memory');
+      ok(new Set(spots(s.cells)).size === s.cells.length, label + ': no two cells share a spot');
+      ok(settle(s.cells, L).kept.length === s.cells.length, label + ': every cell connects to the Core');
+      ok(s.cycles >= 0 && s.net.nodes.every(m => m.alert >= 0 && m.alert <= LIMIT), label + ': cycles and alerts stay in range');
+    };
+    try {
+      // shapes
+      ok(same(orient(1, 0, 1, false), [0, 1]), 'a quarter turn clockwise takes right to down');
+      ok(same(orient(2, -1, 4, false), [2, -1]), 'four quarter turns change nothing');
+      ok(same(orient(2, -1, 0, true), [-2, -1]), 'a flip mirrors left to right');
+      const line = [['core', 0], ['leap', 1], ['probe', 2], ['thread', 3]].map(([cap, dx]) => ({ dx, dy: 0, cap }));
+      const L = { w: 3, h: 3, blocked: new Set(['1,1']) };
+      let r = land(line, L, 0, 0, 0, false);
+      ok(r && r.kept.length === 3 && same(r.lost.map(c => c.cap), ['thread']), 'landing: a cell off the edge is lost');
+      r = land(line, L, 0, 1, 0, false);
+      ok(r && same(r.kept.map(c => c.cap), ['core']), 'landing: cells past used memory are lost with it');
+      ok(land(line, L, 1, 1, 0, false) === null, 'landing: the Core cannot land on used memory');
+      r = land(line, L, 0, 0, 1, false);
+      ok(r && same(spots(r.kept), ['0,0', '0,1', '0,2']), 'landing: a rotated shape lands rotated');
+      const fit = bestFit(line, L);
+      ok(fit.kept.length === 3 && isFree(L, fit.x, fit.y), 'best fit keeps as much as the memory allows');
+      ok(freeConnected({ w: 3, h: 3, blocked: new Set(['1,0', '1,1', '1,2']) }) === false, 'memory split in two is caught');
+      const mid = middleSpot(L);
+      ok(isFree(L, mid.x, mid.y) && Math.abs(mid.x - 1) + Math.abs(mid.y - 1) === 1, 'a landing starts on free memory next to a used middle');
+
+      // networks
+      for (let seed = 1; seed <= 40; seed++) {
+        const net = makeNetwork(seed), last = net.nodes.length - 1, tag = 'seed ' + seed + ': ';
+        ok(net.nodes[0].type === 'pc' && net.nodes[last].type === 'vault', tag + 'starts on a workstation and ends at the Vault');
+        ok(net.nodes.filter(m => m.type === 'vault').length === 1, tag + 'one Vault');
+        ok(net.nodes.some(m => m.type === 'rtr'), tag + 'has a router');
+        ok(distances(net, 0, Infinity).has(last), tag + 'the Vault can be reached');
+        ok(net.nodes.every(m => freeConnected(m.layout)), tag + 'free memory is in one piece everywhere');
+        ok(net.adj.every((list, a) => list.every(b => b !== a && net.adj[b].includes(a))), tag + 'links go both ways');
+        for (const id in STRAINS) {
+          const rel = STRAINS[id].cells.map(([dx, dy, cap]) => ({ dx, dy, cap }));
+          ok(bestFit(rel, net.nodes[0].layout).lost.length === 0, tag + id + ' fits the start whole');
+        }
+        if (seed <= 3) {
+          const shape = m => ({ types: m.nodes.map(x => x.type), adj: m.adj, used: m.nodes.map(x => [...x.layout.blocked]) });
+          ok(same(shape(net), shape(makeNetwork(seed))), tag + 'the same seed gives the same network');
+        }
+      }
+      const tiny = { adj: [[1], [0, 2], [1, 3], [2]] };
+      ok(same([...distances(tiny, 0, 2)], [[0, 0], [1, 1], [2, 2]]), 'distances stop at the range');
+
+      // growing and trimming
+      const t = newRun(3, 'needle'), core = coreOf(t.cells), leapCell = t.cells.find(c => c.cap === 'leap');
+      ok(t.cells.length === 4 && t.cycles === TYPES.pc.cpu, 'a run starts with the whole strain and the machine’s CPU in cycles');
+      ok(trimError(t, core.x, core.y) !== '', 'the Core cannot be trimmed');
+      trim(t, leapCell.x, leapCell.y);
+      ok(t.cells.length === 2 && counts(t.cells).probe === 1, 'trimming the middle of a line drops its far end too');
+      const g = newRun(4, 'bloom'), GL = here(g).layout;
+      here(g).offers = ['leap', 'thread', 'cloak'];
+      g.cycles = 10;
+      const free = [];
+      for (let y = 0; y < GL.h; y++) for (let x = 0; x < GL.w; x++) if (isFree(GL, x, y) && !g.cells.some(c => c.x === x && c.y === y)) free.push({ x, y });
+      const touching = free.filter(p => g.cells.some(c => Math.abs(c.x - p.x) + Math.abs(c.y - p.y) === 1));
+      const apart = free.find(p => !touching.includes(p));
+      ok(growError(g, 0, touching[0].x, touching[0].y) === '', 'growing next to your shape is allowed');
+      grow(g, 0, touching[0].x, touching[0].y);
+      ok(counts(g.cells).leap === 2 && g.cycles === 8 && g.noise === GROW_NOISE, 'growing costs cycles and makes noise');
+      ok(growError(g, 1, touching[0].x, touching[0].y) !== '', "you can't grow onto yourself");
+      ok(growError(g, 1, apart.x, apart.y) !== '', 'growth must touch your shape');
+      const used = [...GL.blocked][0].split(',').map(Number);
+      ok(growError(g, 1, used[0], used[1]) !== '', "you can't grow into used memory");
+      g.cycles = 1;
+      ok(growError(g, 1, touching[1].x, touching[1].y) !== '', 'growth needs the cycles');
+      sound(g, 'after growing');
+
+      // alert
+      const a = newRun(6, 'shade');
+      a.noise = 3;
+      ok(alertGain(a) === 1 + 3 - 1, 'alert rises by watch plus noise minus Cloak');
+      a.noise = 0;
+      ok(alertGain(a) === 0, 'Cloak can hide all the watch');
+      a.turn = SWEEP_EVERY + 1;
+      ok(alertGain(a) === 1, 'watch rises after a sweep');
+      a.turn = 1; a.noise = 5; here(a).alert = LIMIT - 2;
+      endTurn(a);
+      ok(a.phase === 'over' && here(a).alert === LIMIT, 'a full alert wipes you');
+
+      // probing and hopping
+      const p = newRun(7, 'needle');
+      probe(p);
+      const in2 = distances(p.net, 0, 2);
+      ok(p.net.nodes.every(m => m.known === in2.has(m.id)), 'two Probes reveal everything two links out and nothing farther');
+      const h = newRun(8, 'needle');
+      for (const id of h.net.adj[0]) ok((hopError(h, id) === '') === (TYPES[h.net.nodes[id].type].lock <= 1), 'hop ' + id + ': allowed exactly when the lock is open to one Leap');
+      ok(hopError(h, h.net.nodes.length - 1) !== '', "you can't hop to a machine you haven't probed");
+      const open = h.net.adj[0].find(id => !hopError(h, id));
+      ok(open !== undefined, 'seed 8 starts with a machine you can hop to');
+      if (open !== undefined) {
+        h.net.nodes[open].alert = LIMIT;
+        ok(hopError(h, open) !== '', 'a machine whose alert is full locks you out');
+        h.net.nodes[open].alert = 0;
+        h.noise = 2;
+        const gain = alertGain(h), spot = bestFit(relShape(h.cells), h.net.nodes[open].layout);
+        hop(h, open, spot);
+        ok(h.at === open && h.turn === 2 && h.net.nodes[0].alert === gain, 'a hop moves you, ends the turn and leaves its alert behind');
+        ok(same(spots(h.cells), spots(spot.kept)), 'a hop keeps what its landing kept');
+        sound(h, 'after a hop');
+      }
+
+      // Random play never breaks the rules.
+      for (let seed = 1; seed <= 15; seed++) {
+        const s = newRun(seed, Object.keys(STRAINS)[seed % 3]), R = mulberry32(seed * 977);
+        for (let step = 0; step < 300 && s.phase === 'play'; step++) {
+          const roll = R(), L2 = here(s).layout;
+          if (roll < 0.45) {
+            const i = Math.floor(R() * 3), x = Math.floor(R() * L2.w), y = Math.floor(R() * L2.h);
+            if (!growError(s, i, x, y)) grow(s, i, x, y);
+          } else if (roll < 0.55) { if (!probeError(s)) probe(s); }
+          else if (roll < 0.75) {
+            const id = Math.floor(R() * s.net.nodes.length);
+            if (!hopError(s, id)) hop(s, id, bestFit(relShape(s.cells), s.net.nodes[id].layout));
+          } else if (roll < 0.8) {
+            const c = s.cells[Math.floor(R() * s.cells.length)];
+            if (!trimError(s, c.x, c.y)) trim(s, c.x, c.y);
+          } else endTurn(s);
+          if (s.phase !== 'won') sound(s, 'random seed ' + seed + ' step ' + step);
+        }
+      }
+
+      // A plain strategy wins some runs, so the Vault is in reach.
+      let wins = 0;
+      for (let seed = 1; seed <= 10; seed++) if (playWell(newRun(seed, Object.keys(STRAINS)[seed % 3])).phase === 'won') wins++;
+      ok(wins > 0, 'a plain strategy wins at least one of 10 runs (it won ' + wins + ')');
+    } catch (e) { fails.push('exception during self-test: ' + (e && e.message)); }
+    return { total: n, failures: fails };
+  }
+
+  // Grows Leap first, probes when there may be something new, and hops toward the Vault before the alert fills.
+  function playWell(s) {
+    const vault = s.net.nodes.length - 1, toVault = distances(s.net, vault, Infinity);
+    const need = TYPES.vault.lock, want = { leap: need, thread: 2, cloak: 2, probe: 2 };
+    // Where each machine in reach would take you, best first.
+    const hops = (keep) => [...distances(s.net, s.at, hopRange(s)).keys()].filter(id => !hopError(s, id))
+      .map(id => ({ id, fit: bestFit(relShape(s.cells), s.net.nodes[id].layout) })).filter(keep)
+      .sort((x, y) => toVault.get(x.id) - toVault.get(y.id) || y.fit.kept.length - x.fit.kept.length);
+    for (let step = 0; step < 1000 && s.phase === 'play'; step++) {
+      const node = here(s), n = counts(s.cells), L = node.layout;
+      if (!hopError(s, vault)) { hop(s, vault, bestFit(relShape(s.cells), s.net.nodes[vault].layout)); break; }
+      if (n.leap >= need || node.alert + alertGain(s) + watchOf(s, node) + GROW_NOISE >= LIMIT) {
+        const toward = hops(o => toVault.get(o.id) < toVault.get(s.at) && counts(o.fit.kept).leap >= Math.min(n.leap, need));
+        if (toward.length) { hop(s, toward[0].id, toward[0].fit); continue; }
+      }
+      const unseen = [...distances(s.net, s.at, probeRange(s)).keys()].some(id => !s.net.nodes[id].known);
+      if (unseen && !probeError(s) && node.alert + alertGain(s) + PROBE_NOISE < LIMIT) { probe(s); continue; }
+      let grew = false;
+      if (node.alert + alertGain(s) + GROW_NOISE < LIMIT) {
+        const i = node.offers.findIndex(cap => n[cap] < want[cap] && s.cycles >= CAPS[cap].cost);
+        if (i >= 0) {
+          const k = coreOf(s.cells);
+          let spot = null;
+          for (let y = 0; y < L.h; y++) for (let x = 0; x < L.w; x++) {
+            if (!growError(s, i, x, y) && (!spot || Math.abs(x - k.x) + Math.abs(y - k.y) < Math.abs(spot.x - k.x) + Math.abs(spot.y - k.y))) spot = { x, y };
+          }
+          if (spot) { grow(s, i, spot.x, spot.y); grew = true; }
+        }
+      }
+      if (grew) continue;
+      const out = node.alert + alertGain(s) >= LIMIT && hops(o => o.fit.kept.length > 1)[0];
+      if (out) hop(s, out.id, out.fit);
+      else endTurn(s);
+    }
+    return s;
+  }
+
+  // Test contract shared with tools/: set window.portaTestResult before load, then show the result on the page.
+  function runTestsIfRequested() {
+    if (location.hash !== '#test') return;
+    const r = window.portaTestResult = selfTest();
+    let el = $('#test-report');
+    if (!el) { el = document.createElement('div'); el.id = 'test-report'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
+    el.className = r.failures.length ? 'fail' : 'pass';
+    el.textContent = r.failures.length
+      ? 'Self-test: ' + r.failures.length + ' of ' + r.total + ' checks FAILED\n' + r.failures.map(f => '✗ ' + f).join('\n')
+      : 'Self-test: all ' + r.total + ' checks passed';
+    if (r.failures.length) console.error('[sprawl] self-test: ' + r.failures.length + ' of ' + r.total + ' checks failed');
+  }
+
+  // ---------- boot ----------
+  new ResizeObserver(requestDraw).observe($('#stage'));
+  showTitle();
+  runTestsIfRequested();
+  window.addEventListener('hashchange', runTestsIfRequested);
+})();
+</script>
+</body>
+</html>
