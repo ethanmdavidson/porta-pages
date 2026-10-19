@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<!--
+  Workbench
+
+  Checks porta-pages apps against the repo's conventions (see "Conventions"
+  in the README) with nothing but the browser: DOMParser for the document's
+  structure, CSSStyleSheet and CSS.supports() for its styles, new Function()
+  for its scripts, and plain text checks for the rest. Nothing is uploaded,
+  and nothing in the checked files is run: scripts are compiled to find
+  syntax errors, never called.
+
+  Pick the repo folder (only the .html files at its top level are checked,
+  as in tools/), or pick or drop .html files. Each file gets a list of
+  checks. A cross is a broken convention or an error. A warning sign is
+  something this browser drops, or something an app usually has and this
+  one doesn't. Copy or download the results as a Markdown report.
+
+  Limits:
+  - The style results depend on the browser, so check in each one you care
+    about. Vendor-prefixed properties and selectors aren't reported, since
+    other browsers are meant to drop them.
+  - Module scripts aren't checked, because new Function() can't parse import
+    or export. Chromium doesn't say which line a syntax error is on, so there
+    you get the line where the script starts.
+  - This is a demo, not the CI tooling. The checks in tools/ decide what
+    passes.
+
+  The Content-Security-Policy allows 'unsafe-eval', because new Function()
+  needs it.
+
+  Open this file with #test at the end of the URL to run the built-in
+  self-test of the checks against made-up files and show the results on
+  the page.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Workbench</title>
+<meta name="description" content="Checks porta-pages apps against the repo's conventions, in the browser.">
+<style>
+  :root {
+    --paper: #f5f6f4; --panel: #ffffff; --ink: #1c2733; --ink-2: #4a5561; --rule: #d5dad6;
+    --link: #2b5c8a; --pass-bg: #e3f2e9; --pass: #1f6b43; --warn-bg: #fbf0d9; --warn: #8a5a00;
+    --fail-bg: #f8e3e3; --fail: #9b2c2c; --code-bg: #eceee9;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) { :root {
+    --paper: #151a20; --panel: #1d242c; --ink: #e6eaee; --ink-2: #b8c0c8; --rule: #2e363f;
+    --link: #7fb0dc; --pass-bg: #1e3a2d; --pass: #6cc49a; --warn-bg: #3d3220; --warn: #e5b85c;
+    --fail-bg: #44262b; --fail: #e08a96; --code-bg: #262e37;
+  } }
+  *, *::before, *::after { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main {
+    max-width: 48rem; margin: 0 auto;
+    padding: max(2rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) 2rem max(1rem, env(safe-area-inset-left));
+  }
+  h1 { margin: 0 0 0.25rem; font-size: 1.75rem; }
+  .lede { margin: 0 0 1.5rem; color: var(--ink-2); }
+  code { padding: 0 0.25em; border-radius: 4px; background: var(--code-bg); font: 0.875em/1.4 ui-monospace, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+  button, .button {
+    display: inline-block; padding: 0.5rem 0.875rem; border: 1px solid var(--rule); border-radius: 8px;
+    background: var(--panel); color: var(--ink); font: inherit; text-decoration: none; cursor: pointer;
+  }
+  button:hover, .button:hover { border-color: var(--link); }
+  button:focus-visible, .button:focus-visible, summary:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+  button.primary { border-color: var(--link); background: var(--link); color: var(--panel); font-weight: 600; }
+  #drop {
+    padding: 1.25rem; border: 2px dashed var(--rule); border-radius: 12px; background: var(--panel); text-align: center;
+  }
+  #drop.over { border-color: var(--link); }
+  #drop p { margin: 0; }
+  #drop .buttons { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.5rem; margin: 0.875rem 0; }
+  .hint { color: var(--ink-2); font-size: 0.875rem; }
+  #results { margin-top: 1.5rem; }
+  .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 1rem; }
+  #summary { flex: 1 1 16rem; margin: 0; font-weight: 600; }
+  #status { flex-basis: 100%; color: var(--ink-2); font-size: 0.875rem; }
+  #status:empty { display: none; }
+  #files { display: grid; gap: 0.75rem; }
+  .file { border: 1px solid var(--rule); border-radius: 8px; background: var(--panel); }
+  .file > summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.75rem; padding: 0.75rem 1rem; cursor: pointer; list-style: none; }
+  .file > summary::-webkit-details-marker { display: none; }
+  .file > summary::before { content: "\25B8"; width: 0.75rem; color: var(--ink-2); }
+  .file[open] > summary::before { content: "\25BE"; }
+  .file > summary .name { font-weight: 600; overflow-wrap: anywhere; }
+  .badge { padding: 0 0.5rem; border-radius: 999px; font-size: 0.8125rem; font-weight: 600; }
+  .badge.pass { background: var(--pass-bg); color: var(--pass); }
+  .badge.warn { background: var(--warn-bg); color: var(--warn); }
+  .badge.fail { background: var(--fail-bg); color: var(--fail); }
+  .checks { list-style: none; margin: 0; padding: 0 1rem 0.75rem; border-top: 1px solid var(--rule); }
+  .checks > li { display: grid; grid-template-columns: 1.5rem 1fr; padding-top: 0.5rem; }
+  .mark { font-weight: 700; }
+  .checks .pass .mark { color: var(--pass); }
+  .checks .warn .mark { color: var(--warn); }
+  .checks .fail .mark { color: var(--fail); }
+  .notes { grid-column: 2; margin: 0.25rem 0 0; padding-left: 1.125rem; color: var(--ink-2); font-size: 0.9375rem; }
+  .notes li + li { margin-top: 0.125rem; }
+  footer { margin-top: 2rem; font-size: 0.875rem; color: var(--ink-2); }
+  #test-report { position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 10; max-height: 40vh; overflow: auto; padding: 10px 14px; border: 1px solid; border-radius: 8px; font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; }
+  #test-report.pass { background: var(--pass-bg); color: var(--pass); }
+  #test-report.fail { background: var(--fail-bg); color: var(--fail); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Workbench</h1>
+  <p class="lede">Checks porta-pages apps against the repo's conventions, using only what your browser already has. The files stay on your device and nothing in them is run.</p>
+  <section id="drop" aria-label="Files to check">
+    <p>Pick the repo folder, or pick or drop <code>.html</code> files.</p>
+    <div class="buttons">
+      <button type="button" class="primary" id="pick-folder">Choose folder</button>
+      <button type="button" id="pick-files">Choose files</button>
+    </div>
+    <p class="hint">From a folder, only the <code>.html</code> files at its top level are checked. The browser still lists every file in it first, so a folder with <code>node_modules</code> inside takes a moment.</p>
+    <input type="file" id="folder-input" webkitdirectory hidden>
+    <input type="file" id="files-input" accept=".html,text/html" multiple hidden>
+  </section>
+  <section id="results" hidden>
+    <div class="bar">
+      <p id="summary" role="status"></p>
+      <button type="button" id="copy">Copy report</button>
+      <a class="button" id="download" href="#" download="workbench-report.md">Download report</a>
+      <span id="status" aria-live="polite"></span>
+    </div>
+    <div id="files"></div>
+  </section>
+  <footer>Style results are what this browser accepts, so other browsers may differ.</footer>
+</main>
+<script>
+(function () {
+  'use strict';
+  const $ = (s) => document.querySelector(s);
+
+  // Nothing in this script spells out an HTML comment opener: inside a script, one followed by a script tag
+  // changes where the HTML parser ends the script. Regexes use <!-{2} and strings use \x3C!-- instead.
+
+  /* ===================== checks ===================== */
+
+  // The checks each file gets, in the order they're shown. Text in backticks is code. "index" is for
+  // index.html only.
+  const CHECKS = [
+    ['encoding', 'UTF-8 text with no byte order mark'],
+    ['header', 'A header comment right after `<!DOCTYPE html>`'],
+    ['csp', "A Content-Security-Policy with `default-src 'none'`, in `<head>`, before any script, style or link"],
+    ['external', 'No external scripts or stylesheets'],
+    ['text', 'LF line endings, no trailing whitespace, a final newline'],
+    ['selftest', 'A `#test` self-test that sets `window.portaTestResult`'],
+    ['scripts', 'Scripts compile'],
+    ['styles', 'Styles parse in this browser'],
+    ['structure', 'A `lang`, charset, viewport and title, and unique ids'],
+    ['index', 'Links to every other app and nothing else'],
+  ];
+  const MARK = { pass: '✓', warn: '⚠', fail: '✗' };
+
+  // In backticks, with any backticks inside swapped for quotes so the code span stays whole.
+  const code = (s) => '`' + String(s).replace(/`/g, "'") + '`';
+  // CSS source on one line, without comments.
+  const oneLine = (s) => s.replace(/\/\*[\s\S]*?(\*\/|$)/g, ' ').replace(/\s+/g, ' ').trim();
+  // The same, shortened for a note.
+  const snippet = (s) => { const t = oneLine(s); return t.length > 60 ? t.slice(0, 59) + '…' : t; };
+  const plural = (n, word) => n + ' ' + word + (n === 1 ? '' : 's');
+
+  // Decodes a file's bytes, keeping a byte order mark so the checks see it, as the checks in tools/ do.
+  function decode(bytes) {
+    try { return { src: new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes), utf8: true }; }
+    catch (e) { return { src: new TextDecoder('utf-8', { ignoreBOM: true }).decode(bytes), utf8: false }; }
+  }
+
+  // Maps an offset in a text to its 1-based line number.
+  function lineIndex(text) {
+    const starts = [0];
+    for (let i = text.indexOf('\n'); i !== -1; i = text.indexOf('\n', i + 1)) starts.push(i + 1);
+    return (pos) => {
+      let lo = 0, hi = starts.length - 1;
+      while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (starts[mid] <= pos) lo = mid; else hi = mid - 1; }
+      return lo + 1;
+    };
+  }
+
+  // The offsets of each element's start tags, in document order, so the k-th <script> in the parsed document
+  // can be given a line. Tags inside comments and in the text of script, style, textarea and title aren't
+  // tags, so those are skipped in the same pass that finds the tags.
+  function startTags(text) {
+    const byName = {};
+    const re = /<!-{2}[\s\S]*?(?:-{2}>|$)|<(script|style|textarea|title)(?=[\s/>])[^>]*>[\s\S]*?(?=<\/\1[\s/>]|$)|<([a-z][a-z0-9-]*)/gi;
+    for (let m; (m = re.exec(text));) {
+      const name = (m[1] || m[2] || '').toLowerCase();
+      if (name) (byName[name] = byName[name] || []).push(m.index);
+    }
+    return (name) => byName[name.toLowerCase()] || [];
+  }
+
+  // CSP directives by name, each with its sources in lower case. The first of a repeated directive wins.
+  function parsePolicy(policy) {
+    const out = new Map();
+    for (const part of policy.split(';')) {
+      const [name, ...sources] = part.trim().split(/\s+/);
+      if (name && !out.has(name.toLowerCase())) out.set(name.toLowerCase(), sources.join(' ').toLowerCase());
+    }
+    return out;
+  }
+
+  // What a <script> holds: 'classic' script, 'module', 'json' (import maps, speculation rules and JSON data
+  // blocks), or 'data' for anything else, which browsers don't run.
+  const JS_TYPE = /^((text|application)\/(x-)?(java|ecma)script|text\/javascript1\.[0-5]|text\/(jscript|livescript))$/;
+  function scriptKind(el) {
+    const type = (el.getAttribute('type') || '').trim().toLowerCase();
+    if (type === '' || JS_TYPE.test(type)) return 'classic';
+    if (type === 'module') return 'module';
+    if (type === 'importmap' || type === 'speculationrules' || /^application\/([\w.-]+\+)?json$/.test(type)) return 'json';
+    return 'data';
+  }
+
+  // new Function() compiles a script without running it. Both the check and the probe below call through
+  // here, so the line numbers a browser reports for them are comparable.
+  function compileError(body) {
+    try { new Function(body); return null; } catch (e) { return e; }
+  }
+  const reportedLine = (e) => { const l = e.lineNumber !== undefined ? e.lineNumber : e.line; return Number.isInteger(l) ? l : null; };
+
+  // How far the line a browser reports for a syntax error in new Function() is from the line in the body,
+  // found by compiling two known errors. null when the browser doesn't report a usable line (Chromium).
+  let lineShift;
+  function functionLineShift() {
+    if (lineShift !== undefined) return lineShift;
+    const a = compileError('\n\n)'), b = compileError('\n\n\n\n)');
+    const la = a && reportedLine(a), lb = b && reportedLine(b);
+    lineShift = la !== null && lb !== null && lb - la === 2 ? la - 3 : null;
+    return lineShift;
+  }
+
+  // Compiles a classic script. Returns null when it parses, else the error's message and its line within the
+  // script when the browser says. Errors other than syntax errors (an EvalError when eval is blocked) are thrown.
+  function compile(body) {
+    const e = compileError(body);
+    if (!e) return null;
+    if (!(e instanceof SyntaxError)) throw e;
+    const at = reportedLine(e), shift = functionLineShift();
+    const line = at !== null && shift !== null ? at - shift : null;
+    return { message: e.name + ': ' + e.message, line: line >= 1 && line <= body.split('\n').length ? line : null };
+  }
+
+  /* ---------- styles ---------- */
+
+  // Skips the string starting at css[i] and returns the index of its closing quote. An unescaped newline ends
+  // a CSS string too.
+  function skipString(css, i, to) {
+    const q = css[i];
+    for (let j = i + 1; j < to; j++) {
+      if (css[j] === '\\') j++;
+      else if (css[j] === q || css[j] === '\n') return j;
+    }
+    return to;
+  }
+  function skipComment(css, i, to) { const e = css.indexOf('*/', i + 2); return e === -1 || e + 1 >= to ? to : e + 1; }
+
+  // The index of the } that closes the block opened at css[open], or `to` if it's never closed.
+  function matchBrace(css, open, to) {
+    let depth = 0;
+    for (let i = open; i < to; i++) {
+      const c = css[i];
+      if (c === '/' && css[i + 1] === '*') i = skipComment(css, i, to);
+      else if (c === '"' || c === "'") i = skipString(css, i, to);
+      else if (c === '\\') i++;
+      else if (c === '{') depth++;
+      else if (c === '}' && --depth === 0) return i;
+    }
+    return to;
+  }
+
+  // Splits css[from, to) into blocks ({ prelude, start, open, close }) and the declarations or statements
+  // between them ({ text, start }). It knows comments, strings, parentheses (a data: URL has semicolons) and
+  // nesting, which is all it takes to hand each piece to the browser on its own. It isn't a CSS parser.
+  function cssItems(css, from, to) {
+    const items = [];
+    let seg = from, parens = 0;
+    const flush = (end) => { const text = css.slice(seg, end); if (oneLine(text)) items.push({ text, start: seg }); };
+    for (let i = from; i < to; i++) {
+      const c = css[i];
+      if (c === '/' && css[i + 1] === '*') i = skipComment(css, i, to);
+      else if (c === '"' || c === "'") i = skipString(css, i, to);
+      else if (c === '\\') i++;
+      else if (c === '(') parens++;
+      else if (c === ')') parens = Math.max(0, parens - 1);
+      else if (c === ';' && parens === 0) { flush(i); seg = i + 1; }
+      else if (c === '{') {
+        const close = matchBrace(css, i, to);
+        items.push({ prelude: css.slice(seg, i), start: seg, open: i, close });
+        i = close; seg = close + 1; parens = 0;
+      }
+    }
+    flush(to);
+    return items;
+  }
+
+  const GROUPING = /^@(media|supports|container|layer|scope|starting-style)$/;
+  const KEYFRAMES = /^@(-webkit-|-moz-)?keyframes$/;
+  const PREFIXED = /(^|[^\w-])-(webkit|moz|ms|o)-/i;
+  let sheet;
+
+  // Reports what this browser drops from a style sheet: whole rules (a bad selector, an unknown at-rule) and
+  // single declarations (an unknown property or a bad value). Calls note(level, check, pos, text) with pos an
+  // offset in css.
+  function checkCss(css, note) {
+    sheet = sheet || new CSSStyleSheet();
+    const parses = (text) => { sheet.replaceSync(text); return sheet.cssRules.length > 0; };
+    // The offset of the first character that isn't space or a comment, so a note points at the code.
+    const codeAt = (i) => {
+      for (;;) {
+        while (/\s/.test(css[i] || '')) i++;
+        if (css[i] === '/' && css[i + 1] === '*') i = skipComment(css, i, css.length) + 1; else return i;
+      }
+    };
+    // ctx is 'sheet' where rules go, 'style' inside a style rule (declarations and nested rules), and
+    // 'keyframes' inside @keyframes.
+    function walk(from, to, ctx) {
+      for (const it of cssItems(css, from, to)) {
+        if (it.prelude === undefined) {
+          const text = oneLine(it.text);
+          if (/^@import\b/i.test(text)) note('fail', 'external', codeAt(it.start), code(snippet(text)) + ' loads an external stylesheet');
+          else if (ctx === 'sheet' && !PREFIXED.test(text) && !parses(it.text + ';')) note('warn', 'styles', codeAt(it.start), 'this browser drops ' + code(snippet(text)));
+          else if (ctx === 'style') checkDeclaration(text, it.start);
+          continue;
+        }
+        const prelude = oneLine(it.prelude), body = [it.open + 1, it.close];
+        if (ctx === 'keyframes') { walk(...body, 'style'); continue; }
+        if (ctx === 'sheet' && !PREFIXED.test(prelude) && !parses(css.slice(it.start, Math.min(it.close + 1, css.length)))) {
+          note('warn', 'styles', codeAt(it.start), 'this browser drops the rule ' + code(snippet(prelude) + ' {…}'));
+          continue;
+        }
+        const at = (/^@[\w-]+/.exec(prelude) || [''])[0].toLowerCase();
+        if (!at) walk(...body, 'style');
+        else if (at === '@supports' && !CSS.supports(prelude.slice(9).trim())) continue;
+        else if (GROUPING.test(at)) walk(...body, ctx === 'style' ? 'style' : 'sheet');
+        else if (KEYFRAMES.test(at)) walk(...body, 'keyframes');
+        // Other at-rules (@font-face, @page, @property, ...) hold descriptors, which CSS.supports() doesn't know.
+      }
+    }
+    function checkDeclaration(text, start) {
+      const colon = text.indexOf(':');
+      if (colon < 0) { note('warn', 'styles', codeAt(start), 'this browser drops ' + code(snippet(text)) + ', which isn\'t a declaration'); return; }
+      const prop = text.slice(0, colon).trim(), value = text.slice(colon + 1).replace(/!\s*important\s*$/i, '').trim();
+      if (prop.startsWith('--') || PREFIXED.test(prop + ' ' + value)) return;
+      if (!CSS.supports(prop, value)) note('warn', 'styles', codeAt(start), 'this browser drops ' + code(snippet(text)));
+    }
+    walk(0, css.length, 'sheet');
+  }
+
+  /* ---------- a whole file ---------- */
+
+  // Checks one file ({ name, src, utf8 }). batch.names are the names of all the files checked with it, which
+  // index.html must link to, and batch.complete says whether they are every .html file in the folder.
+  // Returns { name, checks: [{ id, title, notes: [{ level, line, text }] }] }.
+  function checkFile(file, batch) {
+    const { name, src } = file;
+    const notes = {};
+    for (const [id] of CHECKS) notes[id] = [];
+    const note = (level, id, line, msg) => notes[id].push({ level, line, text: msg });
+    // Positions are in the text with every line ending made LF, which is how the HTML parser and editors count.
+    const text = src.replace(/\r\n?/g, '\n');
+    const lineOf = lineIndex(text);
+    const doc = new DOMParser().parseFromString(text, 'text/html');
+    const tags = startTags(text);
+    const tagAt = (el) => tags(el.localName)[Array.prototype.indexOf.call(doc.getElementsByTagName(el.localName), el)];
+    const tagLine = (el) => { const pos = tagAt(el); return pos === undefined ? undefined : lineOf(pos); };
+    const scripts = Array.from(doc.getElementsByTagName('script'));
+
+    if (!file.utf8) note('fail', 'encoding', undefined, 'it isn\'t valid UTF-8');
+    if (src.charCodeAt(0) === 0xFEFF) note('fail', 'encoding', 1, 'it starts with a byte order mark, before ' + code('<!DOCTYPE html>'));
+
+    // The same pattern as the checks in tools/.
+    const header = /^<!DOCTYPE html>\n<!-{2}([\s\S]*?)-{2}>/i.exec(src);
+    if (!header) note('fail', 'header', 1, 'expected ' + code('\x3C!-- … -->') + ' right after ' + code('<!DOCTYPE html>') + ' and a line break');
+    else if (!header[1].trim()) note('fail', 'header', 2, 'the header comment is empty');
+
+    const csp = Array.from(doc.querySelectorAll('meta[http-equiv]')).find((m) => m.getAttribute('http-equiv').trim().toLowerCase() === 'content-security-policy');
+    if (!csp) note('fail', 'csp', undefined, 'no ' + code('<meta http-equiv="Content-Security-Policy">'));
+    else {
+      const def = parsePolicy(csp.getAttribute('content') || '').get('default-src');
+      if (def === undefined) note('fail', 'csp', tagLine(csp), 'the policy has no ' + code('default-src'));
+      else if (def !== "'none'") note('fail', 'csp', tagLine(csp), code('default-src ' + def) + ' instead of ' + code("default-src 'none'"));
+      if (!doc.head.contains(csp)) note('fail', 'csp', tagLine(csp), 'it isn\'t in ' + code('<head>') + ', and browsers ignore it anywhere else');
+      const first = doc.querySelector('script, style, link');
+      if (first && csp.compareDocumentPosition(first) & Node.DOCUMENT_POSITION_PRECEDING) {
+        note('fail', 'csp', tagLine(first), 'a ' + code('<' + first.localName + '>') + ' comes before it, so the policy doesn\'t cover that');
+      }
+    }
+
+    for (const s of doc.querySelectorAll('script[src]')) note('fail', 'external', tagLine(s), 'loads a script from ' + code(s.getAttribute('src')));
+    for (const l of doc.querySelectorAll('link[rel]')) {
+      const rel = l.getAttribute('rel');
+      if (/(^|\s)(stylesheet|modulepreload|preload)(\s|$)/i.test(rel)) note('fail', 'external', tagLine(l), code('<link rel="' + rel + '">') + ' loads ' + code(l.getAttribute('href') || ''));
+    }
+
+    const cr = src.match(/\r\n?/g);
+    // Up to the first CR there are only LF line endings, so counting them gives its line.
+    if (cr) note('fail', 'text', src.slice(0, src.indexOf('\r')).split('\n').length, plural(cr.length, 'line') + ' end in CR or CRLF instead of LF');
+    const trailing = [];
+    text.split('\n').forEach((l, i) => { if (/[ \t]$/.test(l)) trailing.push(i + 1); });
+    if (trailing.length) {
+      const shown = trailing.slice(0, 8).join(', ') + (trailing.length > 8 ? ' and ' + (trailing.length - 8) + ' more' : '');
+      note('fail', 'text', trailing[0], 'trailing whitespace on ' + (trailing.length === 1 ? 'this line' : 'lines ' + shown));
+    }
+    if (!src.endsWith('\n')) note('fail', 'text', lineOf(text.length), 'no line break at the end of the file');
+
+    // The same patterns as the checks in tools/.
+    const js = scripts.map((s) => s.textContent).join('\n');
+    if (!/\bwindow\.portaTestResult\s*=(?!=)/.test(js)) note('fail', 'selftest', undefined, 'no inline script assigns ' + code('window.portaTestResult'));
+    if (!/\blocation\.hash\s*[!=]==?\s*(["'])#test\1/.test(js)) note('fail', 'selftest', undefined, 'no inline script compares ' + code('location.hash') + ' with ' + code("'#test'") + ', so nothing keeps the self-test to #test');
+
+    for (const s of scripts) {
+      if (s.hasAttribute('src')) continue;
+      const at = tagLine(s), body = s.textContent, kind = scriptKind(s);
+      if (kind === 'module') note('warn', 'scripts', at, 'a module script, which isn\'t checked: ' + code('new Function()') + ' can\'t parse ' + code('import') + ' or ' + code('export'));
+      else if (kind === 'json') {
+        try { JSON.parse(body); } catch (e) { note('fail', 'scripts', at, code('<script type="' + s.getAttribute('type') + '">') + ' isn\'t valid JSON: ' + e.message); }
+      } else if (kind === 'classic') {
+        let err;
+        try { err = compile(body); } catch (e) { note('warn', 'scripts', at, 'couldn\'t compile the scripts: ' + e.message); break; }
+        // The script's text starts on the line of its start tag.
+        if (err && err.line && at !== undefined) note('fail', 'scripts', at + err.line - 1, err.message);
+        else if (err) note('fail', 'scripts', at, err.message + ' (somewhere in the script that starts here: this browser doesn\'t say which line)');
+      }
+    }
+
+    for (const s of doc.getElementsByTagName('style')) {
+      const at = tagAt(s);
+      checkCss(s.textContent, (level, id, pos, msg) => note(level, id, at === undefined ? undefined : lineOf(text.indexOf('>', at) + 1 + pos), msg));
+    }
+
+    if (!(doc.documentElement.getAttribute('lang') || '').trim()) note('warn', 'structure', undefined, code('<html>') + ' has no ' + code('lang') + ' attribute');
+    const charset = doc.querySelector('meta[charset]');
+    if (!charset) note('warn', 'structure', undefined, 'no ' + code('<meta charset="utf-8">'));
+    else if (charset.getAttribute('charset').trim().toLowerCase() !== 'utf-8') note('warn', 'structure', tagLine(charset), 'the charset is ' + code(charset.getAttribute('charset')) + ', not ' + code('utf-8'));
+    if (!doc.querySelector('meta[name="viewport" i]')) note('warn', 'structure', undefined, 'no viewport ' + code('<meta>') + ', so phones show the page zoomed out');
+    if (!doc.title.trim()) note('warn', 'structure', undefined, 'no ' + code('<title>'));
+    const ids = new Map();
+    for (const el of doc.querySelectorAll('[id]')) ids.set(el.id, (ids.get(el.id) || []).concat(el));
+    for (const [id, els] of ids) if (els.length > 1) note('warn', 'structure', tagLine(els[1]), 'the id ' + code(id) + ' is used ' + els.length + ' times');
+
+    // The same rule as the checks in tools/: every relative href is another app, and every other app is linked.
+    if (name === 'index.html') {
+      const others = batch.names.filter((n) => n !== 'index.html');
+      const seen = new Set();
+      for (const el of doc.querySelectorAll('[href]')) {
+        const href = el.getAttribute('href');
+        if (/^([a-z][a-z0-9+.-]*:|\/|#)/i.test(href)) continue;
+        if (seen.has(href)) note('fail', 'index', tagLine(el), 'links to ' + code(href) + ' more than once');
+        else if (href === 'index.html') note('fail', 'index', tagLine(el), 'links to itself');
+        else if (!others.includes(href)) {
+          if (batch.complete) note('fail', 'index', tagLine(el), 'links to ' + code(href) + ', which isn\'t in the folder');
+          else note('warn', 'index', tagLine(el), 'links to ' + code(href) + ', which isn\'t among the files checked');
+        }
+        seen.add(href);
+      }
+      for (const n of others) if (!seen.has(n)) note('fail', 'index', undefined, 'doesn\'t link to ' + code(n));
+    }
+
+    return {
+      name,
+      checks: CHECKS.filter(([id]) => id !== 'index' || name === 'index.html').map(([id, title]) => ({ id, title, notes: notes[id] })),
+    };
+  }
+
+  function checkBatch(files, complete) {
+    const batch = { names: files.map((f) => f.name), complete };
+    return files.map((f) => checkFile(f, batch));
+  }
+
+  const checkLevel = (c) => (c.notes.some((n) => n.level === 'fail') ? 'fail' : c.notes.length ? 'warn' : 'pass');
+  const fileLevel = (r) => { const levels = r.checks.map(checkLevel); return levels.includes('fail') ? 'fail' : levels.includes('warn') ? 'warn' : 'pass'; };
+  const noteText = (n) => (n.line ? 'line ' + n.line + ': ' : '') + n.text;
+  function badge(r) {
+    const fails = r.checks.filter((c) => checkLevel(c) === 'fail').length, warns = r.checks.filter((c) => checkLevel(c) === 'warn').length;
+    if (!fails && !warns) return 'all ' + r.checks.length + ' checks passed';
+    return [fails && fails + ' failed', warns && plural(warns, 'warning')].filter(Boolean).join(', ');
+  }
+
+  // The results as Markdown, for an issue or a pull request.
+  function report(results, { date, agent }) {
+    const out = ['# Workbench report', '', plural(results.length, 'file') + ' checked on ' + date + ' in ' + agent + '.', ''];
+    for (const r of results) {
+      out.push('## ' + MARK[fileLevel(r)] + ' ' + r.name, '');
+      const shown = r.checks.filter((c) => c.notes.length);
+      if (!shown.length) out.push('All ' + r.checks.length + ' checks passed.');
+      for (const c of shown) {
+        out.push('- ' + MARK[checkLevel(c)] + ' ' + c.title);
+        for (const n of c.notes) out.push('  - ' + noteText(n));
+      }
+      out.push('');
+    }
+    return out.join('\n');
+  }
+
+  /* ===================== reading files ===================== */
+
+  const isHtml = (name) => /\.html$/i.test(name);
+  const byName = (a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+
+  // From a folder pick, the .html files at its top level, like the checks in tools/. A browser that can't
+  // pick folders gives plain files, with no relative path.
+  const topLevelHtml = (files) => files.filter((f) => isHtml(f.name) && (!f.webkitRelativePath || f.webkitRelativePath.split('/').length === 2));
+
+  const entryFile = (entry) => new Promise((resolve, reject) => entry.file(resolve, reject));
+  async function folderEntries(dir) {
+    const reader = dir.createReader(), all = [];
+    for (;;) {
+      const some = await new Promise((resolve, reject) => reader.readEntries(resolve, reject));
+      if (!some.length) return all;
+      all.push(...some);
+    }
+  }
+  // What was dropped: one folder (its top-level files, so the batch is complete) or some files. The items
+  // must be read before the first await, while the drop event still allows it.
+  async function droppedFiles(dt) {
+    const entries = Array.from(dt.items || [], (item) => item.webkitGetAsEntry && item.webkitGetAsEntry()).filter(Boolean);
+    if (!entries.length) return { files: Array.from(dt.files), complete: false };
+    if (entries.length === 1 && entries[0].isDirectory) {
+      const inside = await folderEntries(entries[0]);
+      return { files: await Promise.all(inside.filter((e) => e.isFile && isHtml(e.name)).map(entryFile)), complete: true };
+    }
+    return { files: await Promise.all(entries.filter((e) => e.isFile).map(entryFile)), complete: false };
+  }
+
+  let downloadUrl;
+  async function checkFiles(files, complete) {
+    const html = files.filter((f) => isHtml(f.name)).sort(byName);
+    const skipped = complete ? 0 : files.length - html.length;
+    let results;
+    try {
+      const read = await Promise.all(html.map(async (f) => Object.assign({ name: f.name }, decode(await f.arrayBuffer()))));
+      results = checkBatch(read, complete);
+    } catch (e) {
+      show([], 'Couldn\'t read the files: ' + e.message);
+      return;
+    }
+    show(results, skipped ? 'Skipped ' + plural(skipped, 'file') + ' that ' + (skipped === 1 ? 'isn\'t' : 'aren\'t') + ' .html.' : '');
+  }
+
+  /* ===================== page ===================== */
+
+  // Text with `code` spans, as DOM nodes.
+  function rich(el, s) {
+    s.split('`').forEach((part, i) => {
+      if (i % 2) { const c = document.createElement('code'); c.textContent = part; el.append(c); } else if (part) el.append(part);
+    });
+    return el;
+  }
+  function make(tag, cls, text) {
+    const el = document.createElement(tag);
+    if (cls) el.className = cls;
+    if (text !== undefined) rich(el, text);
+    return el;
+  }
+
+  let lastResults = [];
+  function show(results, status) {
+    lastResults = results;
+    $('#results').hidden = false;
+    $('#status').textContent = status || '';
+    const count = (level) => results.filter((r) => fileLevel(r) === level).length;
+    $('#summary').textContent = results.length
+      ? plural(results.length, 'file') + ' checked: ' + [count('pass') + ' passed', count('warn') && count('warn') + ' with warnings', count('fail') && count('fail') + ' failed'].filter(Boolean).join(', ') + '.'
+      : 'No .html files to check.';
+    $('#copy').hidden = $('#download').hidden = !results.length;
+    if (downloadUrl) URL.revokeObjectURL(downloadUrl);
+    downloadUrl = results.length ? URL.createObjectURL(new Blob([currentReport()], { type: 'text/markdown' })) : undefined;
+    $('#download').href = downloadUrl || '#';
+
+    const list = $('#files');
+    list.replaceChildren();
+    for (const r of results) {
+      const level = fileLevel(r);
+      const details = make('details', 'file ' + level);
+      details.open = level !== 'pass';
+      const summary = make('summary');
+      summary.append(make('span', 'name', r.name), make('span', 'badge ' + level, badge(r)));
+      const ul = make('ul', 'checks');
+      for (const c of r.checks) {
+        const cl = checkLevel(c), li = make('li', cl);
+        const mark = make('span', 'mark', MARK[cl]);
+        mark.setAttribute('role', 'img');
+        mark.setAttribute('aria-label', { pass: 'passed', warn: 'warning', fail: 'failed' }[cl]);
+        li.append(mark, make('span', '', c.title));
+        if (c.notes.length) {
+          const nl = make('ul', 'notes');
+          for (const n of c.notes) nl.append(make('li', '', noteText(n)));
+          li.append(nl);
+        }
+        ul.append(li);
+      }
+      details.append(summary, ul);
+      list.append(details);
+    }
+  }
+  const currentReport = () => report(lastResults, { date: new Date().toISOString().slice(0, 10), agent: navigator.userAgent });
+
+  function setUp() {
+    const folderInput = $('#folder-input'), filesInput = $('#files-input');
+    if (!('webkitdirectory' in folderInput)) $('#pick-folder').hidden = true;
+    $('#pick-folder').addEventListener('click', () => folderInput.click());
+    $('#pick-files').addEventListener('click', () => filesInput.click());
+    // The value is cleared afterwards, so picking the same folder again checks it again.
+    folderInput.addEventListener('change', () => { const files = topLevelHtml(Array.from(folderInput.files)); folderInput.value = ''; checkFiles(files, true); });
+    filesInput.addEventListener('change', () => { const files = Array.from(filesInput.files); filesInput.value = ''; checkFiles(files, false); });
+
+    // Drops land anywhere on the page.
+    const drop = $('#drop');
+    const hasFiles = (e) => e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files');
+    document.addEventListener('dragover', (e) => { if (hasFiles(e)) { e.preventDefault(); drop.classList.add('over'); } });
+    document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) drop.classList.remove('over'); });
+    document.addEventListener('drop', (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      drop.classList.remove('over');
+      droppedFiles(e.dataTransfer).then(({ files, complete }) => checkFiles(files, complete), (err) => show([], 'Couldn\'t read what was dropped: ' + err.message));
+    });
+
+    $('#copy').addEventListener('click', async () => {
+      const md = currentReport();
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(md);
+        else { const ta = document.createElement('textarea'); ta.value = md; document.body.append(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
+        $('#status').textContent = 'Copied the report.';
+      } catch (e) { $('#status').textContent = 'Copy failed: your browser refused clipboard access. Download the report instead.'; }
+    });
+  }
+
+  /* ===================== SELF TEST (runs only with #test) ===================== */
+  function selfTest() {
+    const fails = []; let n = 0;
+    const ok = (cond, name, detail) => { n++; if (!cond) fails.push(name + (detail !== undefined ? ' — got ' + detail : '')); };
+    const eq = (a, b, name) => ok(JSON.stringify(a) === JSON.stringify(b), name, JSON.stringify(a));
+    try {
+      // A made-up app that follows every convention. Options swap parts of it out; null leaves a part out.
+      const page = (o = {}) => [
+        '<!DOCTYPE html>',
+        o.header === null ? null : '\x3C!--' + (o.header !== undefined ? o.header : '\n  A made-up app for the self-test.\n') + '-->',
+        '<html lang="en">', '<head>', '<meta charset="utf-8">',
+        o.beforeCsp,
+        o.csp === null ? null : '<meta http-equiv="Content-Security-Policy" content="' + (o.csp || "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'") + '">',
+        '<meta name="viewport" content="width=device-width, initial-scale=1">', '<title>Made up</title>',
+        '<style>', o.css || 'body { color: red; }', '</style>', o.head, '</head>', '<body>', o.body || '<p>Hi</p>',
+        '<script>', o.js || "if (location.hash === '#test') window.portaTestResult = { total: 1, failures: [] };", '<\/script>',
+        '</body>', '</html>', '',
+      ].filter((l) => l !== null && l !== undefined).join('\n');
+      const run = (src, name, batch) => checkFile({ name: name || 'app.html', src, utf8: true }, batch || { names: [name || 'app.html'], complete: false });
+      const check = (r, id) => r.checks.find((c) => c.id === id);
+      const level = (src, id) => checkLevel(check(run(src), id));
+      const notes = (src, id) => check(run(src), id).notes;
+      const lineAt = (src, needle) => src.slice(0, src.indexOf(needle)).split('\n').length;
+      const problems = (r) => r.checks.filter((c) => c.notes.length).map((c) => c.id + ': ' + c.notes.map(noteText).join('; '));
+
+      const good = page();
+      eq(problems(run(good)), [], 'a page that follows every convention passes every check');
+      ok(!run(good).checks.some((c) => c.id === 'index'), 'only index.html is checked for links to the other apps');
+
+      // header comment
+      eq(level(page({ header: null }), 'header'), 'fail', 'header: a missing comment fails');
+      eq(level(page({ header: '\n  \n' }), 'header'), 'fail', 'header: an empty comment fails');
+      eq(level('\n' + good, 'header'), 'fail', 'header: the doctype has to come first');
+
+      // CSP
+      eq(level(page({ csp: null }), 'csp'), 'fail', 'csp: a missing policy fails');
+      eq(level(page({ csp: "default-src 'self'" }), 'csp'), 'fail', "csp: default-src other than 'none' fails");
+      eq(level(page({ csp: "script-src 'none'" }), 'csp'), 'fail', 'csp: a policy without default-src fails');
+      let src = page({ beforeCsp: '<style></style>' });
+      eq(notes(src, 'csp').map((x) => x.line), [lineAt(src, '<style></style>')], 'csp: a style before the policy fails, on its line');
+      src = page({ csp: null, body: '<p>Hi</p>\n<meta http-equiv="Content-Security-Policy" content="default-src \'none\'">' });
+      ok(notes(src, 'csp').some((x) => /isn't in `<head>`/.test(x.text)), 'csp: a policy outside <head> fails', JSON.stringify(notes(src, 'csp')));
+
+      // external resources
+      src = page({ body: '<p>Hi</p>\n<script src="https://example.com/x.js"><\/script>' });
+      eq(notes(src, 'external').map((x) => x.line), [lineAt(src, '<script src')], 'external: a script with src fails, on its line');
+      eq(level(src, 'scripts'), 'pass', 'external: an external script is not compiled');
+      eq(level(page({ head: '<link rel="preload stylesheet" href="x.css">' }), 'external'), 'fail', 'external: a stylesheet link fails');
+      eq(level(page({ head: '<link rel="icon" href="data:,">' }), 'external'), 'pass', 'external: an icon link is fine');
+      src = page({ css: '@import url(x.css);\nbody { color: red; }' });
+      eq([level(src, 'external'), level(src, 'styles')], ['fail', 'pass'], 'external: a CSS @import fails');
+
+      // text
+      eq(level(good.replace(/\n/g, '\r\n'), 'text'), 'fail', 'text: CRLF line endings fail');
+      eq(notes('a\nb\r\nc\n', 'text')[0].line, 2, 'text: the CR note is on the first line with a CR');
+      src = page({ body: '<p>Hi</p>  ' });
+      eq(notes(src, 'text').map((x) => x.line), [lineAt(src, '<p>Hi</p>  ')], 'text: trailing whitespace fails, on its line');
+      eq(level(good.slice(0, -1), 'text'), 'fail', 'text: a missing final newline fails');
+
+      // self-test shape
+      eq(level(page({ js: 'window.portaTestResult = { total: 1, failures: [] };' }), 'selftest'), 'fail', 'selftest: one that ignores #test fails');
+      eq(level(page({ js: "if (location.hash === '#test') {}" }), 'selftest'), 'fail', 'selftest: one that sets no result fails');
+
+      // scripts: compiled, never run
+      const hash = "if (location.hash === '#test') window.portaTestResult = { total: 1, failures: [] };\n";
+      src = page({ js: hash + 'let x = ;', body: '\x3C!-- an old <script> tag -->\n<p>Hi</p>' });
+      const syntax = notes(src, 'scripts');
+      eq(syntax.map((x) => x.level), ['fail'], 'scripts: a syntax error fails');
+      ok(syntax[0] && /SyntaxError/.test(syntax[0].text), 'scripts: the note names the error', syntax[0] && syntax[0].text);
+      eq(syntax[0] && syntax[0].line, functionLineShift() === null ? lineAt(src, '<script>\n') : lineAt(src, 'let x = ;'),
+        'scripts: the note is on the line of the error, or where the script starts when the browser doesn\'t say');
+      delete window.__workbenchRan;
+      eq(level(page({ js: hash + 'window.__workbenchRan = true;' }), 'scripts'), 'pass', 'scripts: valid code passes');
+      eq(level(page({ js: hash + '});\nwindow.__workbenchRan = true;\n(function () {' }), 'scripts'), 'fail', 'scripts: code that closes the function body is a syntax error');
+      ok(window.__workbenchRan === undefined, 'scripts: no checked code runs');
+      eq(level(page({ head: '<script type="module">import x from "./x.js";<\/script>' }), 'scripts'), 'warn', 'scripts: a module script is reported as not checked');
+      eq(level(page({ head: '<script type="application/json">{"a": 1,}<\/script>' }), 'scripts'), 'fail', 'scripts: bad JSON fails');
+      eq(level(page({ head: '<script type="importmap">{"imports": {}}<\/script>' }), 'scripts'), 'pass', 'scripts: good JSON passes');
+      eq(level(page({ head: '<script type="text/plain">not ) code<\/script>' }), 'scripts'), 'pass', 'scripts: data blocks are left alone');
+
+      // styles
+      src = page({ css: 'body {\n  color: red;\n  colour: red;\n}' });
+      eq(notes(src, 'styles').map((x) => [x.level, x.line]), [['warn', lineAt(src, 'colour')]], 'styles: an unknown property warns, on its line');
+      src = page({ css: 'p { color: red; }\np::not-a-real-thing { color: red; }' });
+      eq(notes(src, 'styles').map((x) => x.line), [lineAt(src, 'p::not')], 'styles: a rule with a bad selector warns, on its line');
+      src = page({ css: '@media (min-width: 1px) {\n  b { color: red; }\n  b::nope { color: red; }\n}' });
+      eq(notes(src, 'styles').map((x) => x.line), [lineAt(src, 'b::nope')], 'styles: rules inside @media are checked one by one');
+      eq(notes(page({ css: 'a { color: red; } } b { color: blue; }' }), 'styles').length, 1, 'styles: a stray } drops the rule after it');
+      eq(notes(page({ css: 'p { color: red; width: 10 parsecs; }' }), 'styles').length, 1, 'styles: a bad value warns');
+      eq(notes(page({ css: [
+        '@media (min-width: 1px) { p { color: red !important; } }',
+        '@font-face { font-family: Made Up; src: local(Arial); font-display: swap; }',
+        '@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(1turn); } }',
+        ':root { --anything: 1px 2px; --x:red; }',
+        'p { background: url(data:image/png;base64,AAAA) no-repeat; content: "}"; } /* { not a block */',
+        '.a { color: red; &:hover { color: blue; } }',
+        'p { -webkit-made-up: 1; } summary::-webkit-made-up { color: red; }',
+        '@supports (made-up: 1) { p { made-up: 1; } }',
+      ].join('\n') }), 'styles'), [], 'styles: valid CSS, descriptors, nesting, vendor prefixes and false @supports blocks pass');
+
+      // structure
+      eq(level(good.replace(' lang="en"', ''), 'structure'), 'warn', 'structure: a missing lang warns');
+      eq(level(good.replace(/<meta name="viewport"[^>]*>\n/, ''), 'structure'), 'warn', 'structure: a missing viewport warns');
+      eq(level(good.replace('<title>Made up</title>', ''), 'structure'), 'warn', 'structure: a missing title warns');
+      src = page({ body: '<p id="a"></p>\n<p id="a"></p>' });
+      eq(notes(src, 'structure').map((x) => x.line), [lineAt(src, '<p id="a"></p>\n') + 1], 'structure: a repeated id warns, on its second use');
+
+      // index.html
+      const index = page({ body: '<a href="a.html">A</a>\n<a href="c.html">C</a>\n<a href="https://example.com/">Elsewhere</a>\n<a href="#top">Top</a>' });
+      const names = ['a.html', 'b.html', 'index.html'];
+      const indexNotes = (complete) => check(run(index, 'index.html', { names, complete }), 'index').notes.map((x) => x.level + ': ' + x.text);
+      eq(indexNotes(true), ['fail: links to `c.html`, which isn\'t in the folder', 'fail: doesn\'t link to `b.html`'], 'index: missing and extra links fail for a folder');
+      eq(indexNotes(false)[0], 'warn: links to `c.html`, which isn\'t among the files checked', 'index: a link to a file that wasn\'t picked only warns');
+
+      // encoding
+      eq(decode(new Uint8Array([0x3C, 0xFF])).utf8, false, 'encoding: invalid UTF-8 is noticed');
+      eq(checkLevel(check(checkFile({ name: 'x.html', src: good, utf8: false }, { names: ['x.html'] }), 'encoding')), 'fail', 'encoding: invalid UTF-8 fails');
+      const bom = decode(new Uint8Array([0xEF, 0xBB, 0xBF, 0x3C]));
+      eq([bom.utf8, bom.src.length], [true, 2], 'encoding: a byte order mark is kept');
+      eq(level('﻿' + good, 'encoding'), 'fail', 'encoding: a byte order mark fails');
+
+      // reading files, and the report
+      eq(topLevelHtml([{ name: 'a.html', webkitRelativePath: 'repo/a.html' }, { name: 'b.html', webkitRelativePath: 'repo/tools/b.html' }, { name: 'c.txt', webkitRelativePath: 'repo/c.txt' }]).map((f) => f.name),
+        ['a.html'], 'folder: only the .html files at the top level are checked');
+      const md = report([run(good, 'good.html'), run(page({ body: '<p>Hi</p>  ' }), 'bad.html')], { date: '2026-01-01', agent: 'Test' }).split('\n');
+      ok(md.includes('## ✓ good.html') && md.includes('All 9 checks passed.'), 'report: a passing file says so', JSON.stringify(md));
+      ok(md.includes('## ✗ bad.html') && md.includes('- ✗ LF line endings, no trailing whitespace, a final newline'), 'report: a failing file lists the failed check', JSON.stringify(md));
+      ok(md.some((l) => /^ {2}- line \d+: trailing whitespace on this line$/.test(l)), 'report: notes are listed under their check', JSON.stringify(md));
+    } catch (e) { fails.push('exception during self-test: ' + (e && e.message)); }
+    delete window.__workbenchRan;
+    return { total: n, failures: fails };
+  }
+
+  // Test contract shared with tools/: set window.portaTestResult before load, then show the result on the page.
+  function runTestsIfRequested() {
+    if (location.hash !== '#test') return;
+    const r = window.portaTestResult = selfTest();
+    let el = $('#test-report');
+    if (!el) { el = document.createElement('div'); el.id = 'test-report'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
+    el.className = r.failures.length ? 'fail' : 'pass';
+    el.textContent = r.failures.length
+      ? 'Self-test: ' + r.failures.length + ' of ' + r.total + ' checks FAILED\n' + r.failures.map((f) => '✗ ' + f).join('\n')
+      : 'Self-test: all ' + r.total + ' checks passed';
+    if (r.failures.length) console.error('[workbench] self-test: ' + r.failures.length + ' of ' + r.total + ' checks failed');
+  }
+
+  setUp();
+  runTestsIfRequested();
+  window.addEventListener('hashchange', runTestsIfRequested);
+})();
+</script>
+</body>
+</html>
