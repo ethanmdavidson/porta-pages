@@ -303,14 +303,13 @@
   const GROUPING = /^@(media|supports|container|layer|scope|starting-style)$/;
   const KEYFRAMES = /^@(-webkit-|-moz-)?keyframes$/;
   const PREFIXED = /(^|[^\w-])-(webkit|moz|ms|o)-/i;
-  let sheet;
 
   // Reports what this browser drops from a style sheet: whole rules (a bad selector, an unknown at-rule) and
   // single declarations (an unknown property or a bad value). Calls note(level, check, pos, text) with pos an
   // offset in css.
   function checkCss(css, note) {
-    sheet = sheet || new CSSStyleSheet();
-    const parses = (text) => { sheet.replaceSync(text); return sheet.cssRules.length > 0; };
+    // A new sheet each time, so nothing from the previous piece can be left in it.
+    const parses = (text) => { const sheet = new CSSStyleSheet(); sheet.replaceSync(text); return sheet.cssRules.length > 0; };
     // The offset of the first character that isn't space or a comment, so a note points at the code.
     const codeAt = (i) => {
       for (;;) {
