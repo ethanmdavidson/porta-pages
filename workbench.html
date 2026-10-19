@@ -20,8 +20,8 @@
     about. Vendor-prefixed properties and selectors aren't reported, since
     other browsers are meant to drop them.
   - Module scripts aren't checked, because new Function() can't parse import
-    or export. Chromium doesn't say which line a syntax error is on, so there
-    you get the line where the script starts.
+    or export. Chromium and Safari don't say which line a syntax error is on,
+    so there you get the line where the script starts.
   - This is a demo, not the CI tooling. The checks in tools/ decide what
     passes.
 
@@ -226,7 +226,7 @@
   const reportedLine = (e) => { const l = e.lineNumber !== undefined ? e.lineNumber : e.line; return Number.isInteger(l) ? l : null; };
 
   // How far the line a browser reports for a syntax error in new Function() is from the line in the body,
-  // found by compiling two known errors. null when the browser doesn't report a usable line (Chromium).
+  // found by compiling two known errors. null when the browser doesn't report a usable line (Chromium, WebKit).
   let lineShift;
   function functionLineShift() {
     if (lineShift !== undefined) return lineShift;
