@@ -10,10 +10,17 @@
   syntax errors, never called.
 
   Pick the repo folder (only the .html files at its top level are checked,
-  as in tools/), or pick or drop .html files. Each file gets a list of
+  as in tools/), pick or drop .html files, or enter their URLs. Each file
+  gets a list of
   checks. A cross is a broken convention or an error. A warning sign is
   something this browser drops, or something an app usually has and this
   one doesn't. Copy or download the results as a Markdown report.
+
+  Another site's files load only if it lets other pages read them (CORS),
+  as raw.githubusercontent.com does for public repos. Relative URLs load
+  from the site this page is served from, and so does "Check this site",
+  which checks the index.html next to this page and every app it lists.
+  Files on your device can't be loaded by URL: pick them instead.
 
   Limits:
   - The style results depend on the browser, so check in each one you care
@@ -26,7 +33,7 @@
     passes.
 
   The Content-Security-Policy allows 'unsafe-eval', because new Function()
-  needs it.
+  needs it, and connect-src 'self' https:, so it can fetch URLs.
 
   Open this file with #test at the end of the URL to run the built-in
   self-test of the checks against made-up files and show the results on
@@ -35,7 +42,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; connect-src 'self' https:; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Workbench</title>
 <meta name="description" content="Checks porta-pages apps against the repo's conventions, in the browser.">
@@ -77,11 +84,17 @@
   #drop.over { border-color: var(--link); }
   #drop p { margin: 0; }
   #drop .buttons { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.5rem; margin: 0.875rem 0; }
+  #url-form { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--rule); }
+  #urls {
+    display: block; width: 100%; margin-top: 0.5rem; padding: 0.5rem 0.625rem; border: 1px solid var(--rule); border-radius: 8px;
+    background: var(--paper); color: var(--ink); font: 0.875rem/1.4 ui-monospace, Menlo, Consolas, monospace; text-align: left; resize: vertical;
+  }
+  #urls:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
   .hint { color: var(--ink-2); font-size: 0.875rem; }
   #results { margin-top: 1.5rem; }
   .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 1rem; }
   #summary { flex: 1 1 16rem; margin: 0; font-weight: 600; }
-  #status { flex-basis: 100%; color: var(--ink-2); font-size: 0.875rem; }
+  #status { flex-basis: 100%; color: var(--ink-2); font-size: 0.875rem; white-space: pre-line; overflow-wrap: anywhere; }
   #status:empty { display: none; }
   #files { display: grid; gap: 0.75rem; }
   .file { border: 1px solid var(--rule); border-radius: 8px; background: var(--panel); }
@@ -111,7 +124,7 @@
 <body>
 <main>
   <h1>Workbench</h1>
-  <p class="lede">Checks porta-pages apps against the repo's conventions, using only what your browser already has. The files stay on your device and nothing in them is run.</p>
+  <p class="lede">Checks porta-pages apps against the repo's conventions, using only what your browser already has. Nothing you pick is uploaded, and nothing in the files is run.</p>
   <section id="drop" aria-label="Files to check">
     <p>Pick the repo folder, or pick or drop <code>.html</code> files.</p>
     <div class="buttons">
@@ -121,6 +134,15 @@
     <p class="hint">From a folder, only the <code>.html</code> files at its top level are checked. The browser still lists every file in it first, so a folder with <code>node_modules</code> inside takes a moment.</p>
     <input type="file" id="folder-input" webkitdirectory hidden>
     <input type="file" id="files-input" accept=".html,text/html" multiple hidden>
+    <form id="url-form">
+      <label for="urls">Or load them from the web, one URL per line:</label>
+      <textarea id="urls" rows="2" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="https://raw.githubusercontent.com/you/repo/main/app.html"></textarea>
+      <div class="buttons">
+        <button type="submit">Check URLs</button>
+        <button type="button" id="check-site" data-hosted hidden>Check this site</button>
+      </div>
+      <p class="hint">Another site has to let other pages read its files (CORS), as <code>raw.githubusercontent.com</code> does for public repos.<span data-hosted hidden> Check this site loads the <code>index.html</code> next to this page and every app it lists.</span></p>
+    </form>
   </section>
   <section id="results" hidden>
     <div class="bar">
@@ -354,9 +376,13 @@
 
   /* ---------- a whole file ---------- */
 
-  // Checks one file ({ name, src, utf8 }). batch.names are the names of all the files checked with it, which
-  // index.html must link to, and batch.complete says whether they are every .html file in the folder.
-  // Returns { name, checks: [{ id, title, notes: [{ level, line, text }] }] }.
+  // An href that isn't to a file next to the page: a URL with a scheme, a path from the root, or an anchor.
+  const ABSOLUTE = /^([a-z][a-z0-9+.-]*:|\/|#)/i;
+
+  // Checks one file ({ name, label, src, utf8 }), where label is what to call it (its URL, when it has one).
+  // batch.names are the names of all the files checked with it, which index.html must link to, and
+  // batch.complete says whether they are every .html file in the folder.
+  // Returns { name, label, checks: [{ id, title, notes: [{ level, line, text }] }] }.
   function checkFile(file, batch) {
     const { name, src } = file;
     const notes = {};
@@ -450,7 +476,7 @@
       const seen = new Set();
       for (const el of doc.querySelectorAll('[href]')) {
         const href = el.getAttribute('href');
-        if (/^([a-z][a-z0-9+.-]*:|\/|#)/i.test(href)) continue;
+        if (ABSOLUTE.test(href)) continue;
         if (seen.has(href)) note('fail', 'index', tagLine(el), 'links to ' + code(href) + ' more than once');
         else if (href === 'index.html') note('fail', 'index', tagLine(el), 'links to itself');
         else if (!others.includes(href)) {
@@ -464,6 +490,7 @@
 
     return {
       name,
+      label: file.label || name,
       checks: CHECKS.filter(([id]) => id !== 'index' || name === 'index.html').map(([id, title]) => ({ id, title, notes: notes[id] })),
     };
   }
@@ -486,7 +513,7 @@
   function report(results, { date, agent }) {
     const out = ['# Workbench report', '', plural(results.length, 'file') + ' checked on ' + date + ' in ' + agent + '.', ''];
     for (const r of results) {
-      out.push('## ' + MARK[fileLevel(r)] + ' ' + r.name, '');
+      out.push('## ' + MARK[fileLevel(r)] + ' ' + r.label, '');
       const shown = r.checks.filter((c) => c.notes.length);
       if (!shown.length) out.push('All ' + r.checks.length + ' checks passed.');
       for (const c of shown) {
@@ -528,19 +555,90 @@
     return { files: await Promise.all(entries.filter((e) => e.isFile).map(entryFile)), complete: false };
   }
 
-  let downloadUrl;
-  async function checkFiles(files, complete) {
-    const html = files.filter((f) => isHtml(f.name)).sort(byName);
-    const skipped = complete ? 0 : files.length - html.length;
-    let results;
-    try {
-      const read = await Promise.all(html.map(async (f) => Object.assign({ name: f.name }, decode(await f.arrayBuffer()))));
-      results = checkBatch(read, complete);
-    } catch (e) {
-      show([], 'Couldn\'t read the files: ' + e.message);
-      return;
+  // Everything checked comes from a source: the name index.html would link to it by, a label to show (its
+  // URL, for one from the web), and read(), which gives its bytes.
+  const fromFile = (f) => ({ name: f.name, label: f.name, read: () => f.arrayBuffer() });
+
+  // The name a URL's file goes by: the last part of its path, or index.html for a folder.
+  function urlName(u) {
+    const last = u.pathname.slice(u.pathname.lastIndexOf('/') + 1);
+    try { return decodeURIComponent(last) || 'index.html'; } catch (e) { return last; }
+  }
+
+  // The URLs typed in, resolved against this page. The CSP lets this page fetch https URLs and ones on its own
+  // site, so anything else is turned away here, with the reason.
+  function parseUrls(text, base) {
+    const here = new URL(base), urls = [], errors = [];
+    for (const s of text.split(/\s+/).filter(Boolean)) {
+      let u;
+      try { u = new URL(s, here); } catch (e) { errors.push(code(s) + ' isn\'t a URL.'); continue; }
+      if (u.protocol === 'https:' || (u.protocol === 'http:' && u.origin === here.origin)) urls.push(u);
+      else if (u.protocol === 'file:') errors.push(code(s) + ' is a file on this device, so pick it with Choose files instead.');
+      else errors.push(code(s) + ' can\'t be loaded: only https URLs, or ones on the site this page is on.');
     }
-    show(results, skipped ? 'Skipped ' + plural(skipped, 'file') + ' that ' + (skipped === 1 ? 'isn\'t' : 'aren\'t') + ' .html.' : '');
+    return { urls, errors };
+  }
+
+  // A source that fetches a URL. fetchFn is fetch, or a stand-in in the self-test.
+  function fromUrl(u, fetchFn) {
+    return {
+      name: urlName(u),
+      label: u.href,
+      async read() {
+        let res;
+        // no-cache asks the server whether the file changed, so a fix that was just deployed shows up.
+        try { res = await fetchFn(u.href, { cache: 'no-cache' }); }
+        catch (e) { throw new Error('couldn\'t load it. The site may not let other pages read its files (CORS), or it may be offline.'); }
+        if (!res.ok) throw new Error('the server answered ' + res.status + '.');
+        return res.arrayBuffer();
+      },
+    };
+  }
+  const fetchUrl = (url, options) => fetch(url, options);
+
+  // The apps on a site, as the checks in tools/ see them: its index.html and each .html file it links to.
+  // base is a page on the site, usually this one.
+  async function siteSources(base, fetchFn) {
+    const index = fromUrl(new URL('index.html', base), fetchFn);
+    const bytes = await index.read();
+    const doc = new DOMParser().parseFromString(decode(bytes).src, 'text/html');
+    const links = new Map();
+    for (const el of doc.querySelectorAll('[href]')) {
+      const href = el.getAttribute('href');
+      if (!ABSOLUTE.test(href) && isHtml(href) && href !== 'index.html' && !links.has(href)) links.set(href, fromUrl(new URL(href, index.label), fetchFn));
+    }
+    // index.html was read already, so it isn't fetched twice.
+    return [Object.assign(index, { read: () => Promise.resolve(bytes) })].concat(Array.from(links.values()));
+  }
+
+  // Reads every source and checks the ones that could be read. Returns their results and what went wrong.
+  async function readAll(sources, complete) {
+    const read = await Promise.allSettled(sources.map((s) => s.read()));
+    const files = [], errors = [];
+    read.forEach((r, i) => {
+      const s = sources[i];
+      if (r.status === 'fulfilled') files.push(Object.assign({ name: s.name, label: s.label }, decode(r.value)));
+      else errors.push(code(s.label) + ': ' + ((r.reason && r.reason.message) || r.reason));
+    });
+    return { results: checkBatch(files.sort(byName), complete), errors };
+  }
+
+  let downloadUrl, busy = false;
+  // Checks some sources and shows the results, with any notes (like files that were skipped) above them.
+  // While one batch loads, others are ignored.
+  async function checkSources(sources, complete, notes = []) {
+    if (busy) return;
+    busy = true;
+    loading();
+    try {
+      const { results, errors } = await readAll(sources, complete);
+      show(results, notes.concat(errors).join('\n'));
+    } finally { busy = false; }
+  }
+  function checkFiles(files, complete) {
+    const html = files.filter((f) => isHtml(f.name));
+    const skipped = complete ? 0 : files.length - html.length;
+    checkSources(html.map(fromFile), complete, skipped ? ['Skipped ' + plural(skipped, 'file') + ' that ' + (skipped === 1 ? 'isn\'t' : 'aren\'t') + ' .html.'] : []);
   }
 
   /* ===================== page ===================== */
@@ -559,15 +657,24 @@
     return el;
   }
 
+  function loading() {
+    $('#results').hidden = false;
+    $('#summary').textContent = 'Loading\u2026';
+    $('#status').textContent = '';
+    $('#files').replaceChildren();
+    $('#copy').hidden = $('#download').hidden = true;
+  }
+
   let lastResults = [];
   function show(results, status) {
     lastResults = results;
     $('#results').hidden = false;
-    $('#status').textContent = status || '';
+    $('#status').replaceChildren();
+    rich($('#status'), status || '');
     const count = (level) => results.filter((r) => fileLevel(r) === level).length;
     $('#summary').textContent = results.length
       ? plural(results.length, 'file') + ' checked: ' + [count('pass') + ' passed', count('warn') && count('warn') + ' with warnings', count('fail') && count('fail') + ' failed'].filter(Boolean).join(', ') + '.'
-      : 'No .html files to check.';
+      : 'Nothing to check.';
     $('#copy').hidden = $('#download').hidden = !results.length;
     if (downloadUrl) URL.revokeObjectURL(downloadUrl);
     downloadUrl = results.length ? URL.createObjectURL(new Blob([currentReport()], { type: 'text/markdown' })) : undefined;
@@ -580,7 +687,7 @@
       const details = make('details', 'file ' + level);
       details.open = level !== 'pass';
       const summary = make('summary');
-      summary.append(make('span', 'name', r.name), make('span', 'badge ' + level, badge(r)));
+      summary.append(make('span', 'name', r.label), make('span', 'badge ' + level, badge(r)));
       const ul = make('ul', 'checks');
       for (const c of r.checks) {
         const cl = checkLevel(c), li = make('li', cl);
@@ -622,6 +729,21 @@
       droppedFiles(e.dataTransfer).then(({ files, complete }) => checkFiles(files, complete), (err) => show([], 'Couldn\'t read what was dropped: ' + err.message));
     });
 
+    $('#url-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const { urls, errors } = parseUrls($('#urls').value, location.href);
+      if (!urls.length) show([], errors.join('\n') || 'Enter a URL to check.');
+      else checkSources(urls.map((u) => fromUrl(u, fetchUrl)), false, errors);
+    });
+    // Only a page served from a site has a site to check.
+    if (location.protocol === 'https:' || location.protocol === 'http:') document.querySelectorAll('[data-hosted]').forEach((el) => { el.hidden = false; });
+    $('#check-site').addEventListener('click', () => {
+      if (busy) return;
+      loading();
+      siteSources(location.href, fetchUrl).then((sources) => checkSources(sources, false),
+        (err) => show([], code(new URL('index.html', location.href).href) + ': ' + err.message));
+    });
+
     $('#copy').addEventListener('click', async () => {
       const md = currentReport();
       try {
@@ -633,7 +755,7 @@
   }
 
   /* ===================== SELF TEST (runs only with #test) ===================== */
-  function selfTest() {
+  async function selfTest() {
     const fails = []; let n = 0;
     const ok = (cond, name, detail) => { n++; if (!cond) fails.push(name + (detail !== undefined ? ' — got ' + detail : '')); };
     const eq = (a, b, name) => ok(JSON.stringify(a) === JSON.stringify(b), name, JSON.stringify(a));
@@ -760,6 +882,40 @@
       ok(md.includes('## ✓ good.html') && md.includes('All 9 checks passed.'), 'report: a passing file says so', JSON.stringify(md));
       ok(md.includes('## ✗ bad.html') && md.includes('- ✗ LF line endings, no trailing whitespace, a final newline'), 'report: a failing file lists the failed check', JSON.stringify(md));
       ok(md.some((l) => /^ {2}- line \d+: trailing whitespace on this line$/.test(l)), 'report: notes are listed under their check', JSON.stringify(md));
+
+      // URLs, with a stand-in for fetch: a string is a file, a number an HTTP error, and a URL that isn't
+      // listed fails the way a CORS refusal does
+      const fakeFetch = (routes) => async (url) => {
+        const r = routes[url];
+        if (r === undefined) throw new TypeError('Failed to fetch');
+        const bytes = new TextEncoder().encode(typeof r === 'string' ? r : '');
+        return { ok: typeof r === 'string', status: typeof r === 'string' ? 200 : r, arrayBuffer: async () => bytes.buffer };
+      };
+      let parsed = parseUrls('https://a.test/x.html\n girih.html  http://b.test/y.html\nhttps://[', 'https://site.test/w/workbench.html');
+      eq(parsed.urls.map(String), ['https://a.test/x.html', 'https://site.test/w/girih.html'], 'urls: https URLs and relative ones are loaded');
+      eq(parsed.errors.length, 2, 'urls: an http URL on another site and a malformed one are turned away');
+      parsed = parseUrls('http://localhost:8000/a.html girih.html', 'http://localhost:8000/workbench.html');
+      eq(parsed.urls.map(String), ['http://localhost:8000/a.html', 'http://localhost:8000/girih.html'], 'urls: http works on the site this page is served from');
+      parsed = parseUrls('girih.html', 'file:///repo/workbench.html');
+      ok(parsed.urls.length === 0 && /Choose files/.test(parsed.errors[0]), 'urls: a file on this device is sent to the file picker', JSON.stringify(parsed.errors));
+      eq([urlName(new URL('https://a.test/apps/')), urlName(new URL('https://a.test/my%20app.html?x=1'))], ['index.html', 'my app.html'], 'urls: a file is named by the last part of its path');
+      const offline = await readAll([fromUrl(new URL('https://nowhere.test/x.html'), fakeFetch({}))], false);
+      ok(offline.results.length === 0 && /CORS/.test(offline.errors[0]), 'urls: a failed fetch says why it might have failed', JSON.stringify(offline.errors));
+
+      const site = 'https://site.test/apps/';
+      const routes = {};
+      routes[site + 'index.html'] = page({ body: '<a href="a.html">A</a>\n<a href="b.html">B</a>\n<a href="a.html">A again</a>\n<a href="https://elsewhere.test/c.html">C</a>\n<a href="#top">Top</a>' });
+      routes[site + 'a.html'] = good;
+      routes[site + 'b.html'] = 404;
+      const sources = await siteSources(site + 'workbench.html', fakeFetch(routes));
+      eq(sources.map((x) => x.label), [site + 'index.html', site + 'a.html', site + 'b.html'], 'site: index.html and each file next to it that it links to, once each');
+      const loaded = await readAll(sources, false);
+      eq(loaded.results.map((r) => [r.name, r.label]), [['a.html', site + 'a.html'], ['index.html', site + 'index.html']], 'site: the files that loaded are checked and labelled with their URLs');
+      eq(loaded.errors, [code(site + 'b.html') + ': the server answered 404.'], 'site: a file that didn\'t load is reported');
+      ok(check(loaded.results[1], 'index').notes.some((x) => x.level === 'warn' && /b\.html/.test(x.text)), 'site: the index link to a file that didn\'t load is a warning');
+      ok(report(loaded.results, { date: '2026-01-01', agent: 'Test' }).split('\n').includes('## \u2713 ' + site + 'a.html'), 'report: a file from the web is named by its URL');
+      const noIndex = await siteSources('https://nowhere.test/', fakeFetch({})).then(() => 'no error', (e) => e.message);
+      ok(/CORS/.test(noIndex), 'site: an index.html that can\'t be loaded is an error', noIndex);
     } catch (e) { fails.push('exception during self-test: ' + (e && e.message)); }
     delete window.__workbenchRan;
     return { total: n, failures: fails };
@@ -768,17 +924,19 @@
   // Test contract shared with tools/: set window.portaTestResult before load, then show the result on the page.
   function runTestsIfRequested() {
     if (location.hash !== '#test') return;
-    const r = window.portaTestResult = selfTest();
-    let el = $('#test-report');
-    if (!el) { el = document.createElement('div'); el.id = 'test-report'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
-    el.className = r.failures.length ? 'fail' : 'pass';
-    el.textContent = r.failures.length
-      ? 'Self-test: ' + r.failures.length + ' of ' + r.total + ' checks FAILED\n' + r.failures.map((f) => '✗ ' + f).join('\n')
-      : 'Self-test: all ' + r.total + ' checks passed';
-    if (r.failures.length) {
-      console.error('[workbench] self-test: ' + r.failures.length + ' of ' + r.total + ' checks failed');
-      r.failures.forEach((f) => console.error('  ✗ ' + f));
-    }
+    window.portaTestResult = selfTest().then((r) => {
+      let el = $('#test-report');
+      if (!el) { el = document.createElement('div'); el.id = 'test-report'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
+      el.className = r.failures.length ? 'fail' : 'pass';
+      el.textContent = r.failures.length
+        ? 'Self-test: ' + r.failures.length + ' of ' + r.total + ' checks FAILED\n' + r.failures.map((f) => '\u2717 ' + f).join('\n')
+        : 'Self-test: all ' + r.total + ' checks passed';
+      if (r.failures.length) {
+        console.error('[workbench] self-test: ' + r.failures.length + ' of ' + r.total + ' checks failed');
+        r.failures.forEach((f) => console.error('  \u2717 ' + f));
+      }
+      return r;
+    });
   }
 
   setUp();
