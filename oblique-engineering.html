@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<!--
+  Oblique Engineering
+
+  A deck of prompts for when you're stuck on a software problem, after
+  Oblique Strategies, the cards Brian Eno and Peter Schmidt made in 1975 for
+  getting unstuck in the studio. Some cards keep their original wording; the
+  rest are rewritten for software, or new.
+
+  Read the card and see what it suggests about the problem in front of you.
+  Tap the card, press the button, or press Space or Enter for another. The
+  deck deals every card once, in a random order, before it reshuffles. One
+  card is blank on purpose, as in the original deck. Nothing is saved, so
+  reloading the page starts a new shuffle.
+
+  Open this file with #test at the end of the URL to run the built-in
+  self-test and show the results on the page.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Oblique Engineering</title>
+<meta name="description" content="A deck of prompts for getting unstuck on software problems, after Brian Eno and Peter Schmidt's Oblique Strategies.">
+<style>
+  :root {
+    --table: #e9ebe7; --card: #ffffff; --ink: #1c2733; --ink-2: #4a5561; --rule: #d5dad6; --link: #2b5c8a;
+    --shadow: 0 1px 2px rgba(28, 39, 51, 0.08), 0 8px 24px rgba(28, 39, 51, 0.12);
+    --pass-bg: #e3f2e9; --pass: #1f6b43; --fail-bg: #f8e3e3; --fail: #9b2c2c;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) { :root {
+    --table: #101418; --card: #1d242c; --ink: #e6eaee; --ink-2: #b8c0c8; --rule: #2e363f; --link: #7fb0dc;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.5);
+    --pass-bg: #1e3a2d; --pass: #6cc49a; --fail-bg: #44262b; --fail: #e08a96;
+  } }
+  *, *::before, *::after { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--table); color: var(--ink);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main {
+    min-height: 100vh; min-height: 100dvh;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1.25rem;
+    padding: max(1.5rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) max(1.5rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
+  }
+  h1 { margin: 0; font-size: 0.875rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); }
+  /* Landscape, like the original cards. It grows taller if a card's text needs more room. */
+  .card {
+    width: min(100%, 30rem); aspect-ratio: 9 / 7;
+    display: flex; align-items: center; justify-content: center; padding: 1.5rem 1.75rem;
+    background: var(--card); border: 1px solid var(--rule); border-radius: 10px; box-shadow: var(--shadow);
+    cursor: pointer; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent;
+  }
+  .card.dealt { animation: deal 0.25s ease-out; }
+  @keyframes deal { from { opacity: 0; transform: translateY(6px); } }
+  @media (prefers-reduced-motion: reduce) { .card.dealt { animation: none; } }
+  #text { margin: 0; text-align: center; white-space: pre-line; font-size: clamp(1.25rem, 5vw, 1.625rem); line-height: 1.3; text-wrap: balance; }
+  #next {
+    font: inherit; padding: 0.5rem 1.25rem; border: 1px solid var(--rule); border-radius: 999px;
+    background: var(--card); color: var(--ink); cursor: pointer;
+  }
+  #next:hover { border-color: var(--link); }
+  #next:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+  footer { max-width: 30rem; text-align: center; font-size: 0.8125rem; color: var(--ink-2); }
+  footer p { margin: 0.25rem 0; }
+  footer a { color: var(--link); }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+  #test-report { position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 10; max-height: 40vh; overflow: auto; padding: 10px 14px; border: 1px solid; border-radius: 8px; font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; }
+  #test-report.pass { background: var(--pass-bg); color: var(--pass); }
+  #test-report.fail { background: var(--fail-bg); color: var(--fail); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Oblique Engineering</h1>
+  <div id="card" class="card" aria-live="polite">
+    <p id="text"></p>
+    <span id="blank" class="sr-only" hidden>Blank card</span>
+  </div>
+  <button id="next" type="button">Another card</button>
+  <footer>
+    <p>After <cite>Oblique Strategies</cite> by Brian Eno and Peter Schmidt (1975). Some cards use their original wording.</p>
+    <p>Source and license: <a href="https://github.com/ethanmdavidson/porta-pages">github.com/ethanmdavidson/porta-pages</a></p>
+  </footer>
+</main>
+<script>
+/* ===================== CARDS ===================== */
+// One string per card. A newline starts a new line on the card. The empty string is the blank card.
+var CARDS = [
+  'Abandon normal instruments',
+  'Accept advice',
+  'Look at it from the other side of the interface',
+  'Relax a rule',
+  'What are the boundaries? What crosses them?',
+  'Argue for the design you rejected',
+  'Ask your body',
+  'Write the ugly version first',
+  'When this fails, what fails next?',
+  'Change nothing. Ship it',
+  'Explain it out loud, slowly',
+  'What is the common theme?',
+  'How does it degrade?',
+  'Consult other sources\n– promising\n– unpromising',
+  'Courage!',
+  'Unplug a dependency and see what breaks',
+  "Define an area as 'safe' and use it as an anchor",
+  'Discard an axiom',
+  "Let go of the solution you're attached to",
+  'Discover the recipes you are using and abandon them',
+  'Do nothing for as long as possible',
+  "Don't rule out the obvious",
+  'Use boring technology',
+  "If it's not broken, don't fix it",
+  'List the goals/ideals in tension\n– prioritize one\n– find the balance point',
+  'Do the names need changing?',
+  "Leave room for what you don't know yet",
+  'Why does this system exist?',
+  'Faced with a choice, do both',
+  "Look out the window and see what's outside",
+  'Go slowly all the way round the outside',
+  'Why does this mistake keep happening?',
+  'How would you have done it?',
+  'Nothing is perfect',
+  'Trace it all the way through',
+  'What are you assuming is impossible?',
+  'Is it finished?',
+  'Is there something missing?',
+  'Check the timeouts, the limits, the defaults',
+  'Diagram it',
+  'Listen to the quiet voice',
+  'Why is it this size?',
+  'Look at the order in which you do things',
+  'Look closely at the most embarrassing details',
+  'Focus on the core, not the fringe',
+  "What constraints can't be removed? Are you sure?",
+  'Script the thing you keep doing by hand',
+  'Comment it out and keep going',
+  'Overtly resist change',
+  'Remove ambiguities and convert to specifics',
+  'Remove specifics and convert to ambiguities',
+  'Repetition is a form of change',
+  'Work backward from the goal',
+  'Short circuit',
+  'Use it the way a stranger would',
+  'Take away the elements in order of apparent non-importance',
+  'Take a walk. Leave your phone',
+  'Listen instead of speaking',
+  'The workaround is now the feature',
+  'The network is imperfect',
+  'Trust in the you of now',
+  'Invert the dependency',
+  'Use an old idea',
+  'Use an unsuitable technology',
+  'Use fewer abstractions',
+  'Ask the newest person on the team',
+  'What are you really thinking about just now? Incorporate',
+  'What does production actually do?',
+  'What mistakes did you make last time?',
+  'What would your closest friend do?',
+  "What wouldn't you do?",
+  'Work at a different speed',
+  'You are a user',
+  'One thing at a time',
+  "You don't have to be ashamed of using your own ideas",
+  '',
+  'Is there a single source of truth?',
+  'What happens if they disagree?',
+  'Fail fast and early',
+  "Parse, don't validate",
+  'Given enough eyeballs, all bugs are shallow',
+  "Show it before it's ready",
+  'Clean as you go',
+  'A complex system that works evolved from a simple system that worked',
+  'Start small',
+  'Find the part that can work today',
+  'Simplicity is prerequisite for reliability',
+  'Could you hold the whole thing in your head?',
+  'Testing can show the presence but not the absence of errors',
+  'Error prevention is better than error removal',
+  'The earlier you catch a bug, the easier it is to fix',
+  'Code never lies, comments sometimes do',
+  'Copy it. Wait for the third copy before you unify',
+  'What changed?',
+  'Is this a one-way door or a two-way door?',
+  'Who gets woken up when this breaks?'
+];
+
+/* ===================== DECK ===================== */
+// Returns a function that deals the cards in a random order without repeats, then reshuffles. A new shuffle
+// never starts with the card that ended the last one.
+function makeDeck(cards, random) {
+  var pile = [], last;
+  function swap(i, j) { var t = pile[i]; pile[i] = pile[j]; pile[j] = t; }
+  return function draw() {
+    if (!pile.length) {
+      pile = cards.slice();
+      for (var i = pile.length - 1; i > 0; i--) swap(i, Math.floor(random() * (i + 1)));
+      // pop() deals from the end of the pile.
+      if (pile.length > 1 && pile[pile.length - 1] === last) swap(0, pile.length - 1);
+    }
+    return (last = pile.pop());
+  };
+}
+
+/* ===================== UI ===================== */
+function $(id) { return document.getElementById(id); }
+var draw = makeDeck(CARDS, Math.random), current;
+
+function show(text) {
+  current = text;
+  $('text').textContent = text;
+  $('blank').hidden = text !== '';
+  var card = $('card');
+  card.classList.remove('dealt');
+  void card.offsetWidth; // restart the animation
+  card.classList.add('dealt');
+}
+function next() { show(draw()); }
+
+$('card').addEventListener('click', next);
+$('next').addEventListener('click', next);
+document.addEventListener('keydown', function (e) {
+  // Buttons and links handle their own Space and Enter.
+  if (e.altKey || e.ctrlKey || e.metaKey || (e.target.closest && e.target.closest('button, a'))) return;
+  if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); next(); }
+});
+
+/* ===================== SELF TEST (runs only with #test) ===================== */
+function selfTest() {
+  var fails = [], n = 0;
+  function ok(cond, name, detail) { n++; if (!cond) fails.push(name + (detail !== undefined ? ' — got ' + detail : '')); }
+  // Seeded, so the deck checks deal the same cards every run.
+  function seeded(seed) { return function () { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; }; }
+  try {
+    // The cards
+    ok(CARDS.length > 0, 'there are cards');
+    var seen = {}, blanks = 0;
+    CARDS.forEach(function (c, i) {
+      ok(typeof c === 'string', 'card ' + i + ' is a string', typeof c);
+      if (c === '') { blanks++; return; }
+      var label = JSON.stringify(c);
+      ok(c.split('\n').every(function (l) { return l !== '' && l === l.trim(); }), label + ': no empty lines or stray spaces');
+      ok(!/\.$/.test(c), label + ': no final period, like the original cards');
+      ok(!seen[c.toLowerCase()], label + ': appears once');
+      seen[c.toLowerCase()] = true;
+    });
+    ok(blanks === 1, 'there is exactly one blank card', blanks);
+
+    // The deck
+    var d = makeDeck(CARDS, seeded(42)), dealt = {}, distinct = 0, i, c;
+    for (i = 0; i < CARDS.length; i++) { c = d(); if (!dealt[c]) distinct++; dealt[c] = true; }
+    ok(distinct === CARDS.length, 'one shuffle deals every card once', distinct + ' different cards of ' + CARDS.length);
+    // With three cards, a shuffle would start with the card that ended the last one about a third of the time.
+    var prev, repeats = 0;
+    d = makeDeck(['a', 'b', 'c'], seeded(7));
+    for (i = 0; i < 300; i++) { c = d(); if (c === prev) repeats++; prev = c; }
+    ok(repeats === 0, 'no card is dealt twice in a row across reshuffles', repeats + ' repeats');
+    var one = makeDeck(['x'], Math.random);
+    ok(one() === 'x' && one() === 'x', 'a one-card deck keeps dealing that card');
+
+    // The page
+    var before = current;
+    $('card').click();
+    ok(current !== before, 'clicking the card deals another card');
+    ok($('text').textContent === current, 'the card shows the card dealt');
+    before = current;
+    $('next').click();
+    ok(current !== before, 'the button deals another card');
+    before = current;
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }));
+    ok(current !== before, 'Space deals another card');
+    show('');
+    ok($('text').textContent === '' && !$('blank').hidden, 'the blank card is empty, and says "Blank card" to screen readers');
+    show(CARDS[0]);
+    ok($('blank').hidden, 'other cards hide the "Blank card" label');
+    next();
+  } catch (e) { fails.push('exception during self-test: ' + (e && e.message)); }
+  if (fails.length) { console.error('[oblique] self-test: ' + fails.length + ' of ' + n + ' checks FAILED'); fails.forEach(function (f) { console.error('  ✗ ' + f); }); }
+  else console.info('[oblique] self-test: all ' + n + ' checks passed');
+  return { total: n, failures: fails };
+}
+
+// Test contract shared with tools/: set window.portaTestResult before load, then show the result on the page.
+function runTestsIfRequested() {
+  if (location.hash !== '#test') return;
+  var r = window.portaTestResult = selfTest();
+  var el = $('test-report');
+  if (!el) { el = document.createElement('div'); el.id = 'test-report'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
+  el.className = r.failures.length ? 'fail' : 'pass';
+  el.textContent = r.failures.length
+    ? 'Self-test: ' + r.failures.length + ' of ' + r.total + ' checks FAILED\n' + r.failures.map(function (f) { return '✗ ' + f; }).join('\n')
+    : 'Self-test: all ' + r.total + ' checks passed';
+}
+
+/* ===================== BOOT ===================== */
+next();
+runTestsIfRequested();
+window.addEventListener('hashchange', runTestsIfRequested);
+</script>
+</body>
+</html>
