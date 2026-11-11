@@ -327,7 +327,7 @@ function boot(DATA) {
         <div>${esc(f.d)}</div>
         ${f.note ? `<div class="note" style="--seg:var(--${f.k})">${esc(f.note)}</div>` : `<div class="note" style="--seg:var(--${f.k})"><em>No specific note. Verdict is ${f.src === "override" ? "a per-feature override" : f.src.startsWith("group") ? "inherited from the " + esc(M.groups[f.src.slice(6)] || f.src.slice(6)) + " group rule" : "the default for a feature no rule matched"}.</em></div>`}
         <div class="links">
-          ${f.s ? `<a href="${esc(f.s)}" target="_blank" rel="noopener">Specification</a>` : ""}
+          ${webUrl(f.s) ? `<a href="${esc(webUrl(f.s))}" target="_blank" rel="noopener">Specification</a>` : ""}
           ${f.c ? `<a href="https://caniuse.com/${esc(f.c)}" target="_blank" rel="noopener">caniuse</a>` : ""}
           <a href="https://web-platform-dx.github.io/web-features-explorer/features/${esc(f.id)}/" target="_blank" rel="noopener">web-features explorer</a>
         </div>
@@ -744,6 +744,12 @@ const OVERRIDES = {
   "font-size-adjust": ["ok", ""],
 };
 
+// A link from the dataset, kept only if it is an http(s) URL. The dataset comes from the network (and #src= can
+// name any mirror), and escaping alone doesn't stop a javascript: URL in an href.
+function webUrl(s) {
+  try { const u = new URL(s); return u.protocol === "https:" || u.protocol === "http:" ? u.href : ""; } catch (e) { return ""; }
+}
+
 function reduce(data, version) {
   const out = [];
   for (const [id, f] of Object.entries(data.features)) {
@@ -754,7 +760,7 @@ function reduce(data, version) {
     for (const g of groups) if (GROUP_RULES[g]) { [bucket, note] = GROUP_RULES[g]; src = "group:" + g; }
     if (OVERRIDES[id]) { [bucket, note] = OVERRIDES[id]; src = "override"; }
     const sup = st.support || {};
-    out.push({ id, n: f.name, d: f.description || "", g: groups, s: (f.spec && f.spec[0]) || "", c: (f.caniuse && f.caniuse[0]) || "",
+    out.push({ id, n: f.name, d: f.description || "", g: groups, s: webUrl(f.spec && f.spec[0]), c: (f.caniuse && f.caniuse[0]) || "",
       b: st.baseline === "high" ? "high" : st.baseline === "low" ? "low" : "limited", lo: st.baseline_low_date || "", hi: st.baseline_high_date || "",
       v: { ch: sup.chrome || "", ff: sup.firefox || "", sa: sup.safari || "", ios: sup.safari_ios || "" }, k: bucket, note, src });
   }
@@ -869,6 +875,10 @@ async function selfTest() {
     eq([R.meta.webFeaturesVersion, R.meta.buckets, R.meta.groups], ["3.1.4", BUCKETS, { css: "CSS", fetch: "Fetch", cookies: "Cookies" }], "reduce: meta carries the version, verdict names and group names");
     ok(/^\d{4}-\d{2}-\d{2}$/.test(R.meta.generated), "reduce: meta.generated is a date", R.meta.generated);
     eq(reduce({ features: {} }, "3.0.0").meta.groups, {}, "reduce: a dataset without groups gives no group names");
+    const specOf = (url) => reduce({ groups: {}, features: { x: { kind: "feature", name: "X", spec: [url] } } }, "3.0.0").features[0].s;
+    eq(["javascript:alert(1)", " JavaScript:alert(1)", "data:text/html,hi", "not a url", "http://example.test/a"].map(specOf), ["", "", "", "", "http://example.test/a"],
+      "reduce: a spec link is kept only if it is an http(s) URL");
+    eq([webUrl("javascript:alert(1)"), webUrl(undefined), webUrl("https://example.test/")], ["", "", "https://example.test/"], "webUrl: only http(s) URLs pass, for links from an older local copy too");
 
     // view state survives a trip through the URL hash
     eq(parseHash(""), DEFAULT_VIEW, "hash: empty gives the default view");
