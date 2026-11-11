@@ -55,7 +55,7 @@
   .seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; background: var(--panel); }
   .seg button { border: 0; background: transparent; padding: 6px 12px; font: inherit; font-size: 13px; color: var(--ink-soft); cursor: pointer; }
   .seg button[aria-pressed="true"] { background: var(--ink); color: #fff; }
-  .seg button:focus-visible, .btn:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+  .seg button:focus-visible, .btn:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible, .info:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
   .btn { border: 1px solid var(--rule); background: var(--panel); border-radius: 8px; padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer; color: var(--ink); }
   .btn:hover { border-color: var(--ink-soft); }
 
@@ -97,8 +97,14 @@
   .adv .f.wide { grid-column: 1 / -1; }
   .hint { font-size: 12px; color: var(--ink-soft); margin-top: 3px; }
   .hint a { color: var(--cool); }
-  .info { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border-radius: 50%; border: 1px solid var(--ink-soft); color: var(--ink-soft); font-size: 10.5px; font-weight: 600; margin-left: 4px; cursor: help; vertical-align: 1px; }
+  .adv .f .lbl { margin-bottom: 3px; font-size: 12.5px; color: var(--ink-soft); }
+  .adv .f .lbl label { display: inline; margin: 0; }
+  /* A "?" button that opens a popover with more detail: tap, click, Enter or Space, so it works on touch too. */
+  .info { position: relative; display: inline-flex; margin-left: 4px; vertical-align: 1px; align-items: center; justify-content: center; width: 16px; height: 16px; padding: 0; border-radius: 50%; border: 1px solid var(--ink-soft); background: transparent; color: var(--ink-soft); font-family: inherit; font-size: 10.5px; font-weight: 600; line-height: 1; cursor: pointer; }
+  .info::before { content: ""; position: absolute; inset: -6px; } /* a bigger target than the circle */
   .info:hover, .info:focus-visible { border-color: var(--ink); color: var(--ink); }
+  .tip { max-width: min(24rem, calc(100vw - 32px)); padding: 12px 14px; border: 1px solid var(--rule); border-radius: 10px; background: var(--panel); color: var(--ink); font-size: 14px; line-height: 1.45; box-shadow: 0 8px 24px rgba(31, 42, 51, 0.18); }
+  .tip::backdrop { background: rgba(31, 42, 51, 0.15); }
 
   .verdict { border-radius: 12px; padding: 16px 18px; margin-bottom: 14px; border: 1px solid transparent; }
   .verdict.win { background: var(--win-bg); border-color: #b9dcc7; }
@@ -197,17 +203,20 @@
             <div class="hint" id="modeHint"></div>
           </div>
           <div class="f">
-            <label for="seer">AC efficiency (SEER) <span class="info" tabindex="0" title="Seasonal Energy Efficiency Ratio: cooling delivered per unit of electricity, in Btu per watt-hour. Higher is better. Printed on the yellow EnergyGuide sticker on the outdoor unit; if the sticker is gone, search the model number on the outdoor unit's data plate. Systems from the 1990s are typically 10–12, 2006–2022 installs 13–16, and anything sold since 2023 is at least 14–15 (SEER2 ratings are ~5% lower than SEER; either is fine here).">?</span></label>
+            <div class="lbl"><label for="seer">AC efficiency (SEER)</label><button type="button" class="info" popovertarget="tip-seer" aria-label="About SEER">?</button></div>
+            <div class="tip" id="tip-seer" popover>Seasonal Energy Efficiency Ratio: cooling delivered per unit of electricity, in Btu per watt-hour. Higher is better. Printed on the yellow EnergyGuide sticker on the outdoor unit; if the sticker is gone, search the model number on the outdoor unit's data plate. Systems from the 1990s are typically 10–12, 2006–2022 installs 13–16, and anything sold since 2023 is at least 14–15 (SEER2 ratings are ~5% lower than SEER; either is fine here).</div>
             <input id="seer" type="number" step="0.5" min="6" max="30">
             <div class="hint">Yellow EnergyGuide sticker or model-number lookup. Old units 10–12, recent 14–16. <a href="https://www.energy.gov/energysaver/central-air-conditioning" target="_blank" rel="noopener">More</a></div>
           </div>
           <div class="f">
-            <label for="ief">Dehumidifier IEF (L/kWh) <span class="info" tabindex="0" title="Integrated Energy Factor: liters of water removed per kilowatt-hour of electricity. Higher is better. Listed on the ENERGY STAR label, the spec sheet, or the retailer's product page. If you only know pints/day and watts: IEF ≈ pints × 0.473 ÷ (watts × 24 ÷ 1000). Federal minimum is 1.30 (≤25 pints) to 1.60 (25–50 pints); ENERGY STAR units are about 1.6–2.0.">?</span></label>
+            <div class="lbl"><label for="ief">Dehumidifier IEF (L/kWh)</label><button type="button" class="info" popovertarget="tip-ief" aria-label="About IEF">?</button></div>
+            <div class="tip" id="tip-ief" popover>Integrated Energy Factor: liters of water removed per kilowatt-hour of electricity. Higher is better. Listed on the ENERGY STAR label, the spec sheet, or the retailer's product page. If you only know pints/day and watts: IEF ≈ pints × 0.473 ÷ (watts × 24 ÷ 1000). Federal minimum is 1.30 (≤25 pints) to 1.60 (25–50 pints); ENERGY STAR units are about 1.6–2.0.</div>
             <input id="ief" type="number" step="0.05" min="0.5" max="4">
             <div class="hint">Spec sheet or ENERGY STAR label. Typical 1.3–2.0. From pints/day and watts: pints × 0.473 ÷ (W × 0.024). <a href="https://www.energystar.gov/products/dehumidifiers" target="_blank" rel="noopener">Lookup</a></div>
           </div>
           <div class="f">
-            <label for="price">Electricity ($/kWh) <span class="info" tabindex="0" title="Use your all-in rate: total bill divided by kWh used, so fuel charges, fees, and taxes are included. The 'energy charge' line alone understates it.">?</span></label>
+            <div class="lbl"><label for="price">Electricity ($/kWh)</label><button type="button" class="info" popovertarget="tip-price" aria-label="About the electricity rate">?</button></div>
+            <div class="tip" id="tip-price" popover>Use your all-in rate: total bill divided by kWh used, so fuel charges, fees, and taxes are included. The 'energy charge' line alone understates it.</div>
             <input id="price" type="number" step="0.01" min="0" max="2">
             <div class="hint">Total bill ÷ kWh used on the bill.</div>
           </div>
@@ -217,12 +226,14 @@
             <div class="hint">Sets barometric pressure. Small effect.</div>
           </div>
           <div class="f">
-            <label for="vol">House air volume (<span id="volUnit">ft³</span>) <span class="info" tabindex="0" title="Conditioned floor area times average ceiling height. Only count the space the open windows actually flush; if you open one bedroom, use that room's volume. Volume scales the dollar figures but does not change the verdict.">?</span></label>
+            <div class="lbl"><label for="vol">House air volume (<span id="volUnit">ft³</span>)</label><button type="button" class="info" popovertarget="tip-vol" aria-label="About house air volume">?</button></div>
+            <div class="tip" id="tip-vol" popover>Conditioned floor area times average ceiling height. Only count the space the open windows actually flush; if you open one bedroom, use that room's volume. Volume scales the dollar figures but does not change the verdict.</div>
             <input id="vol" type="number" step="500" min="100">
             <div class="hint">Floor area × ceiling height, for the space you are ventilating.</div>
           </div>
           <div class="f">
-            <label for="ach">Air changes per hour, windows open <span class="info" tabindex="0" title="How many times per hour the outdoor air replaces the room's air. Hard to know precisely; use a bracket. Windows cracked, still air: about 0.5–1. Several windows open, light breeze: 1–3. Cross-breeze through opposite windows: 3–6. Window fan or whole-house fan: fan CFM × 60 ÷ volume in ft³ (a 20-inch box fan is roughly 1,000–2,000 CFM). ACH scales the dollar figures but does not change the verdict.">?</span></label>
+            <div class="lbl"><label for="ach">Air changes per hour, windows open</label><button type="button" class="info" popovertarget="tip-ach" aria-label="About air changes per hour">?</button></div>
+            <div class="tip" id="tip-ach" popover>How many times per hour the outdoor air replaces the room's air. Hard to know precisely; use a bracket. Windows cracked, still air: about 0.5–1. Several windows open, light breeze: 1–3. Cross-breeze through opposite windows: 3–6. Window fan or whole-house fan: fan CFM × 60 ÷ volume in ft³ (a 20-inch box fan is roughly 1,000–2,000 CFM). ACH scales the dollar figures but does not change the verdict.</div>
             <input id="ach" type="number" step="0.5" min="0.1" max="30">
             <div class="hint">Estimate: cracked 0.5–1, open 1–3, cross-breeze 3–6, fan CFM×60÷ft³.</div>
           </div>
@@ -232,10 +243,12 @@
             <div class="hint">Scales the dollar figures.</div>
           </div>
           <div class="f">
-            <label for="margin">Marginal band (kJ/kg) <span class="info" tabindex="0" title="How close outdoor and indoor total heat content (enthalpy) must be before the verdict says 'marginal' instead of committing. Consumer humidity sensors are typically off by 3–5% RH, which is roughly 1–2 kJ/kg at room conditions, so 1.5 is a reasonable default. Set to 0 to always get a firm answer.">?</span></label>
+            <div class="lbl"><label for="margin">Marginal band (kJ/kg)</label><button type="button" class="info" popovertarget="tip-margin" aria-label="About the marginal band">?</button></div>
+            <div class="tip" id="tip-margin" popover>How close outdoor and indoor total heat content (enthalpy) must be before the verdict says 'marginal' instead of committing. Consumer humidity sensors are typically off by 3–5% RH, which is roughly 1–2 kJ/kg at room conditions, so 1.5 is a reasonable default. Set to 0 to always get a firm answer.</div>
             <input id="margin" type="number" step="0.5" min="0" max="10">
             <div class="hint">Sensor slop. 1.5 ≈ a ±4% RH sensor error.</div>
           </div>
+        </div>
       </details>
       <p class="saved" id="savedNote"></p>
     </div>
@@ -702,6 +715,21 @@ function selfTest() {
     ok(be.beTd > U.f2c(57) && be.beTd < U.f2c(61), 'AC break-even at 68°F is ≈59°F dew point', fmt(U.c2f(be.beTd), 1));
     near(compute(st({ mode: 'dehum' })).beTd, inS.Td, 1e-9, 'dehumidifier break-even = indoor dew point');
     ok(compute(st({ mode: 'ac', tOutF: 125, rhOut: 5 })).beTd === null, 'very hot air (125°F): no humidity makes ventilation pay');
+    // Field help: each "?" opens its own popover, which holds the help text
+    var infos = document.querySelectorAll('.info');
+    ok(infos.length === 6, 'six field-help buttons', infos.length);
+    Array.prototype.forEach.call(infos, function (b) {
+      var tip = document.getElementById(b.getAttribute('popovertarget') || '');
+      var label = b.getAttribute('aria-label') || '';
+      ok(tip && tip.hasAttribute('popover') && tip.textContent.trim().length > 20, label + ': opens a popover with help text');
+      ok(/^About /.test(label), b.getAttribute('popovertarget') + ': the button has a name that says what it shows', JSON.stringify(label));
+      if (tip && typeof tip.showPopover === 'function') {
+        b.click();
+        ok(tip.matches(':popover-open'), label + ': clicking the button shows the help');
+        b.click();
+        ok(!tip.matches(':popover-open'), label + ': clicking it again hides the help');
+      }
+    });
     // Storage round trip (does not touch saved inputs)
     try { var k = KEY + '.selftest'; localStorage.setItem(k, '{"ok":1}'); ok(JSON.parse(localStorage.getItem(k)).ok === 1, 'localStorage round trip'); localStorage.removeItem(k); }
     catch (e) { console.info('[window-calc] localStorage unavailable in this context; inputs will not persist.'); }

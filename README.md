@@ -19,6 +19,10 @@ Each file is also its own README: it should have a comment block at the top that
 
 Use [web-features-report.html](web-features-report.html) to see which features can be relied upon to meet our criteria.
 
+### Browser support
+
+An app may rely on a web platform feature if it is Baseline Widely available, or if it is supported in current Chrome, Firefox and Safari (including iOS), as the web-features report shows. Anything newer is progressive enhancement only: feature-detect it, and make sure the app still works without it. No polyfills.
+
 ### Conventions
 
 Every `.html` file at the repo root is treated as an app and must:
