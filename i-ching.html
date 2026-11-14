@@ -105,9 +105,12 @@
   #reading:focus { outline: none; }
   .cast { margin-top: 1.5rem; }
   .cast h2 { margin: 0 0 0.75rem; font-size: 1.25rem; }
-  .pair { display: flex; align-items: flex-start; gap: 0.75rem; margin-bottom: 0.75rem; }
-  .pair figure { margin: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 0.5rem; }
-  .pair figcaption { font-size: 0.875rem; color: var(--ink-2); }
+  /* The hexagram cast, with its name under it. When lines are changing there are three columns: the hexagram cast,
+     the marks and the hexagram it becomes, and under them the two names with an arrow between. */
+  .pair { display: grid; grid-template-columns: auto; justify-content: start; align-items: start; gap: 0.5rem 0.75rem; margin-bottom: 0.75rem; }
+  .pair.two { grid-template-columns: repeat(3, auto); }
+  .pair .name, .pair .arrow { font-size: 0.875rem; color: var(--ink-2); }
+  .pair .arrow { justify-self: center; }
   .cast p { margin: 0; }
 
   /* The six lines of a hexagram, drawn top line first. */
@@ -1133,18 +1136,22 @@ function readingView(values) {
   values.forEach(function (v, i) { if (isChanging(v)) moving.push(LINE_NAMES[i].toLowerCase().replace(' line', '')); });
   var frag = document.createDocumentFragment();
 
-  var pair = el('div', { 'class': 'pair' }, [
-    el('figure', {}, [figure(values, 'Hexagram ' + first + ' as cast', true), el('figcaption', { text: nameOf(first) })])
-  ]);
+  var pair = el('div', { 'class': 'pair' }, [figure(values, 'Hexagram ' + first + ' as cast', true)]);
   var how;
   if (!moving.length) {
     how = 'No lines are changing, so the reading is the Judgment and the Image of hexagram ' + first + '.';
   } else {
+    pair.className = 'pair two';
     pair.appendChild(changeMarks(values));
-    pair.appendChild(el('figure', {}, [figure(values.map(afterChange), 'Hexagram ' + second, false), el('figcaption', { text: nameOf(second) })]));
+    pair.appendChild(figure(values.map(afterChange), 'Hexagram ' + second, false));
     how = (moving.length === 6 ? 'All six lines are' : 'The ' + listOf(moving) + (moving.length > 1 ? ' lines are' : ' line is')) + ' changing. ' +
       'Read the Judgment and the Image of hexagram ' + first + ', then the changing lines, which are marked. ' +
       'Hexagram ' + second + ' is what it becomes once they have changed.';
+  }
+  pair.appendChild(el('span', { 'class': 'name', text: nameOf(first) }));
+  if (moving.length) {
+    pair.appendChild(el('span', { 'class': 'arrow', 'aria-hidden': 'true', text: '→' }));
+    pair.appendChild(el('span', { 'class': 'name', text: nameOf(second) }));
   }
   frag.appendChild(el('section', { 'class': 'cast' }, [
     el('h2', { text: 'Your reading' }), pair,
@@ -1307,13 +1314,16 @@ function selfTest() {
     var marks = out.querySelectorAll('.cast .marks span');
     ok(marks.length === 6 && out.querySelectorAll('.cast .marks [class]').length === 2 && marks[3].className === 'yang' && marks[2].className === 'yin',
       'between the two figures, a ring stands beside the yang line that changes and a cross beside the yin one');
+    var under = out.querySelectorAll('.cast .pair > span');
+    ok(under.length === 3 && under[0].textContent === nameOf(first) && under[1].className === 'arrow' && under[2].textContent === nameOf(second),
+      'under the figures, an arrow points from the name of the first hexagram to the name of the second');
     ok(/third and fourth lines are changing/.test(out.querySelector('.cast p').textContent), 'the reading says which lines are changing', out.querySelector('.cast p').textContent);
     ok(shown[0].querySelector('.zh').textContent === HEXAGRAMS[first - 1].judgment[0], 'the Judgment is shown in Chinese');
     ok(shown[0].querySelector('.zh').lang === 'zh-Hant', 'Chinese text is marked as Chinese');
     ok(document.title.indexOf(first + ' ') === 0, 'the title names the reading', document.title);
 
     show({ values: [7, 7, 8, 8, 7, 8] });
-    ok(out.querySelectorAll('.hexagram').length === 1 && !out.querySelector('li.changing') && !out.querySelector('.marks'), 'a reading with no changing lines shows one hexagram, with nothing marked');
+    ok(out.querySelectorAll('.hexagram').length === 1 && !out.querySelector('li.changing') && !out.querySelector('.marks') && !out.querySelector('.arrow'), 'a reading with no changing lines shows one hexagram, with nothing marked');
     ok(/No lines are changing/.test(out.querySelector('.cast p').textContent), 'and says that no lines are changing');
 
     show({ values: [9, 9, 9, 9, 9, 9] });
