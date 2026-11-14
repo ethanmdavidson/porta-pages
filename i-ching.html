@@ -1204,6 +1204,7 @@ $('lines-form').addEventListener('submit', function (e) {
   var input = $('own-lines'), good = /^[6-9]{6}$/.test(input.value);
   input.setCustomValidity(good ? '' : 'Enter six digits, each one 6, 7, 8 or 9, with the bottom line first.');
   if (!good) { input.setAttribute('aria-invalid', 'true'); input.reportValidity(); return; }
+  input.removeAttribute('aria-invalid');
   navigate('#' + input.value);
 });
 $('own-lines').addEventListener('input', function (e) { e.target.setCustomValidity(''); e.target.removeAttribute('aria-invalid'); });
@@ -1322,19 +1323,27 @@ function selfTest() {
     navigate = function (hash) { went.push(hash); };
     $('cast-form').dispatchEvent(new Event('submit', { cancelable: true }));
     ok(went.length === 1 && /^#[6-9]{6}$/.test(went[0]), 'Cast a hexagram goes to a new reading', went.join(' '));
-    $('own-lines').value = '78968';
+    // The other two forms are folded away until asked for. Open them, as a person must, so that the browser can point
+    // at the field when it says what is wrong with it.
+    var more = document.querySelector('details.more'), own = $('own-lines');
+    more.open = true;
+    own.value = '78968';
     $('lines-form').dispatchEvent(new Event('submit', { cancelable: true }));
-    ok(went.length === 1 && !$('own-lines').validity.valid, 'five digits are not read', went.join(' '));
-    $('own-lines').value = '789680';
+    ok(went.length === 1 && !own.validity.valid, 'five digits are not read', went.join(' '));
+    ok(own.getAttribute('aria-invalid') === 'true' && own.validationMessage !== '', 'and the field says what is wrong', own.validationMessage);
+    own.value = '789680';
     $('lines-form').dispatchEvent(new Event('submit', { cancelable: true }));
     ok(went.length === 1, 'digits outside 6 to 9 are not read', went.join(' '));
-    $('own-lines').value = '789687';
+    own.value = '789687';
     $('lines-form').dispatchEvent(new Event('submit', { cancelable: true }));
-    ok(went[1] === '#789687' && $('own-lines').validity.valid, 'six digits from 6 to 9 go to that reading', went.join(' '));
-    $('own-lines').value = '';
+    ok(went[1] === '#789687' && own.validity.valid, 'six digits from 6 to 9 go to that reading', went.join(' '));
+    ok(!own.hasAttribute('aria-invalid'), 'and the field is no longer marked as wrong');
+    own.value = '';
+    own.blur();
     $('pick').value = '23';
     $('lookup-form').dispatchEvent(new Event('submit', { cancelable: true }));
     ok(went[2] === '#23', 'Open this hexagram goes to the hexagram picked', went.join(' '));
+    more.open = false;
 
     show(null);
     ok(!out.firstChild && document.title === 'I Ching', 'with nothing to show, the reading is empty');
