@@ -785,7 +785,7 @@ function setup() {
   if (navigator.share) {
     $('share').hidden = false;
     $('share').addEventListener('click', function () {
-      navigator.share({ title: 'Step Sequencer', url: $('link').value }).catch(function () { /* cancelled */ });
+      navigator.share({ title: 'Step Sequencer', url: $('link').value }).catch(function () { /* canceled */ });
     });
   }
   var wavUrl = '';
