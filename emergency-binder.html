@@ -1,0 +1,1023 @@
+<!DOCTYPE html>
+<!--
+  Emergency binder
+
+  The information someone would need if you were hurt, sick or missing:
+  medical details, emergency contacts, doctors, insurance numbers, notes,
+  and small attached documents such as a photo of an insurance card. It
+  works offline, from a file on your phone or computer, which is exactly
+  when you need it.
+
+  The file is the database. Press Edit to fill it in, then Save. Save
+  writes a new copy of this page with your information inside it, so keep
+  that copy and open it from now on. In Chrome and Edge, Save lets you pick
+  a file and later saves go straight to it. In other browsers each save is
+  a download, and downloads pile up as "emergency-binder (3).html" and so
+  on: the revision number and date at the bottom of the page tell copies
+  apart. Delete the old ones.
+
+  Until you save, your edits are kept in this browser (localStorage), so a
+  closed tab doesn't lose them. Print gives a paper copy of the same page.
+
+  Attached documents are limited to 3 MB in all, and large photos are
+  shrunk when you add them. Import reads the information out of another
+  binder file, for example to move it into a newer version of this page.
+
+  Nothing is encrypted. Anyone who has the file can read it, which is the
+  point in an emergency, so store and share it the way you would a paper
+  binder.
+
+  Open this file with #test at the end of the URL to run the built-in
+  self-test and show the results on the page.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Emergency binder</title>
+<meta name="description" content="Medical information, emergency contacts and insurance numbers in one file that saves itself and works offline.">
+<style>
+  :root {
+    --paper: #f6f3ee; --panel: #ffffff; --ink: #221d1a; --ink-2: #5d544d; --rule: #ddd5cc;
+    --accent: #b3261e; --accent-ink: #ffffff; --link: #2a5c8a;
+    --alert-bg: #fbe5e2; --alert: #8f1d16;
+    --ok-bg: #e2f1e7; --ok: #1f6b43; --warn-bg: #fbefd3; --warn: #7a5200;
+    --pass-bg: #e3f2e9; --pass: #1f6b43; --fail-bg: #f8e3e3; --fail: #9b2c2c;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) { :root {
+    --paper: #171412; --panel: #221e1b; --ink: #eee8e2; --ink-2: #bcb2a9; --rule: #3a332e;
+    --accent: #e0574d; --accent-ink: #1a0f0d; --link: #86b6e2;
+    --alert-bg: #47201c; --alert: #ffb4aa;
+    --ok-bg: #1e3a2d; --ok: #7fd1a5; --warn-bg: #3f3215; --warn: #f0c46c;
+    --pass-bg: #1e3a2d; --pass: #6cc49a; --fail-bg: #44262b; --fail: #e08a96;
+  } }
+  *, *::before, *::after { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  a { color: var(--link); }
+  button, input, textarea, select { font: inherit; color: inherit; }
+  :focus-visible { outline: 3px solid var(--link); outline-offset: 2px; }
+
+  .bar {
+    position: sticky; top: 0; z-index: 5; background: var(--paper); border-bottom: 1px solid var(--rule);
+    padding: max(0.5rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) 0.5rem max(1rem, env(safe-area-inset-left));
+  }
+  .bar-inner { max-width: 48rem; margin: 0 auto; display: flex; flex-wrap: wrap; gap: 0.5rem 0.75rem; align-items: center; }
+  .brand { display: flex; align-items: center; gap: 0.5rem; font-weight: 700; margin-right: auto; }
+  .brand svg { flex: none; }
+  .tools { display: flex; flex-wrap: wrap; gap: 0.375rem; align-items: center; }
+  .btn {
+    border: 1px solid var(--rule); background: var(--panel); border-radius: 8px; padding: 0.375rem 0.75rem;
+    cursor: pointer; font-size: 0.9375rem; line-height: 1.3; text-decoration: none; display: inline-block;
+  }
+  .btn:hover { border-color: var(--ink-2); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  .btn.danger { color: var(--alert); }
+  .btn.small { padding: 0.25rem 0.5rem; font-size: 0.875rem; }
+  .more { position: relative; }
+  .more > summary { list-style: none; }
+  .more > summary::-webkit-details-marker { display: none; }
+  .more-menu {
+    position: absolute; right: 0; top: calc(100% + 4px); z-index: 6; display: grid; gap: 0.25rem; min-width: 13rem;
+    padding: 0.375rem; background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; box-shadow: 0 6px 20px rgb(0 0 0 / 0.15);
+  }
+  .more-menu .btn { border-color: transparent; text-align: left; width: 100%; }
+  .more-menu .btn:hover { border-color: var(--rule); }
+  .status { max-width: 48rem; margin: 0.375rem auto 0; font-size: 0.875rem; color: var(--ink-2); display: flex; gap: 0.5rem; align-items: baseline; flex-wrap: wrap; }
+  .pill { display: inline-block; padding: 0.0625rem 0.5rem; border-radius: 999px; font-weight: 600; font-size: 0.8125rem; }
+  .pill.ok { background: var(--ok-bg); color: var(--ok); }
+  .pill.warn { background: var(--warn-bg); color: var(--warn); }
+  .pill.bad { background: var(--alert-bg); color: var(--alert); }
+
+  main {
+    max-width: 48rem; margin: 0 auto;
+    padding: 1rem max(1rem, env(safe-area-inset-right)) 3rem max(1rem, env(safe-area-inset-left));
+  }
+  .banner { margin: 0 0 1rem; padding: 0.75rem 1rem; border-radius: 8px; background: var(--warn-bg); color: var(--warn); }
+  .banner.bad { background: var(--alert-bg); color: var(--alert); }
+  .banner p { margin: 0 0 0.5rem; }
+  .banner p:last-child { margin-bottom: 0; }
+
+  .card { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 1rem 1.125rem; margin: 0 0 1rem; break-inside: avoid; }
+  .card h2 { margin: 0 0 0.5rem; font-size: 1.125rem; }
+  .ice { border: 2px solid var(--accent); }
+  .eyebrow { margin: 0; font-size: 0.8125rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent); }
+  .ice h2 { font-size: 1.625rem; margin: 0.125rem 0 0.25rem; }
+  .vitals { margin: 0 0 0.75rem; color: var(--ink-2); }
+  .vitals b { color: var(--ink); }
+  .alert { background: var(--alert-bg); color: var(--alert); border-radius: 8px; padding: 0.5rem 0.75rem; margin: 0.5rem 0; }
+  .alert strong { display: block; font-size: 0.8125rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  .text { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
+  dl { margin: 0; display: grid; grid-template-columns: minmax(8rem, max-content) 1fr; gap: 0.375rem 1rem; }
+  dt { color: var(--ink-2); font-size: 0.9375rem; }
+  dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  @media (max-width: 30rem) { dl { grid-template-columns: 1fr; gap: 0; } dd { margin-bottom: 0.5rem; } }
+  .people { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); }
+  .person { border-top: 1px solid var(--rule); padding-top: 0.5rem; }
+  .person .who { font-weight: 600; }
+  .person .role { color: var(--ink-2); }
+  .person .phone { font-size: 1.125rem; font-weight: 600; }
+  .person p { margin: 0; }
+  .docs { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); }
+  .doc { margin: 0; }
+  .doc button.thumb { display: block; width: 100%; padding: 0; border: 1px solid var(--rule); border-radius: 6px; background: var(--paper); cursor: zoom-in; overflow: hidden; }
+  .doc img { display: block; width: 100%; height: 8rem; object-fit: cover; }
+  .doc figcaption { font-size: 0.875rem; margin-top: 0.25rem; overflow-wrap: anywhere; }
+  .file-chip { display: flex; align-items: center; justify-content: center; height: 8rem; border: 1px solid var(--rule); border-radius: 6px; background: var(--paper); font-weight: 700; color: var(--ink-2); }
+  .empty { text-align: center; padding: 2rem 1rem; }
+  .empty p { color: var(--ink-2); }
+  .colophon { margin-top: 1.5rem; font-size: 0.8125rem; color: var(--ink-2); text-align: center; }
+
+  form.editor fieldset { min-width: 0; border: 1px solid var(--rule); border-radius: 10px; background: var(--panel); margin: 0 0 1rem; padding: 0.75rem 1.125rem 1rem; }
+  form.editor legend { font-weight: 700; font-size: 1.0625rem; padding: 0 0.25rem; }
+  form.editor .hint { margin: 0 0 0.75rem; color: var(--ink-2); font-size: 0.875rem; }
+  .field { display: grid; gap: 0.125rem; margin: 0 0 0.75rem; }
+  .field label { font-size: 0.875rem; font-weight: 600; color: var(--ink-2); }
+  .field input, .field textarea { width: 100%; padding: 0.5rem 0.625rem; border: 1px solid var(--rule); border-radius: 6px; background: var(--paper); }
+  .field textarea { min-height: 4.5rem; resize: vertical; }
+  .row2 { display: grid; gap: 0 0.75rem; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); }
+  .item { border-top: 1px dashed var(--rule); padding-top: 0.75rem; margin-top: 0.25rem; }
+  .item-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; font-weight: 600; }
+  .budget { font-size: 0.875rem; color: var(--ink-2); margin: 0.5rem 0; }
+  meter { width: 100%; height: 0.75rem; }
+  .doc-row { display: flex; gap: 0.5rem; align-items: center; border-top: 1px dashed var(--rule); padding: 0.5rem 0; }
+  .doc-row img, .doc-row .mini { width: 3rem; height: 3rem; object-fit: cover; border-radius: 4px; flex: none; border: 1px solid var(--rule); }
+  .doc-row .mini { display: flex; align-items: center; justify-content: center; font-size: 0.6875rem; font-weight: 700; color: var(--ink-2); }
+  .doc-row input { flex: 1; min-width: 0; padding: 0.375rem 0.5rem; border: 1px solid var(--rule); border-radius: 6px; background: var(--paper); }
+  .doc-row .size { font-size: 0.8125rem; color: var(--ink-2); white-space: nowrap; }
+  .file-pick input { display: block; margin-top: 0.25rem; }
+  .msg { font-size: 0.875rem; color: var(--alert); margin: 0.25rem 0 0; }
+
+  dialog { max-width: min(96vw, 60rem); max-height: 94vh; padding: 0.5rem; border: 1px solid var(--rule); border-radius: 10px; background: var(--panel); color: var(--ink); }
+  dialog::backdrop { background: rgb(0 0 0 / 0.6); }
+  dialog img { display: block; max-width: 100%; max-height: calc(94vh - 4rem); margin: 0 auto; }
+  .dialog-bar { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; }
+  .dialog-bar span { overflow-wrap: anywhere; font-size: 0.9375rem; }
+
+  #test-report { position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 10; max-height: 40vh; overflow: auto; padding: 10px 14px; border: 1px solid; border-radius: 8px; font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; }
+  #test-report.pass { background: var(--pass-bg); color: var(--pass); }
+  #test-report.fail { background: var(--fail-bg); color: var(--fail); }
+
+  @media print {
+    :root { --paper: #fff; --panel: #fff; --ink: #000; --ink-2: #333; --rule: #999; --accent: #000; --alert-bg: #fff; --alert: #000; }
+    body { font-size: 11pt; }
+    .bar, #edit, #banners, .no-print, #test-report, dialog { display: none !important; }
+    #view { display: block !important; }
+    main { max-width: none; padding: 0; }
+    .card { border-color: #999; }
+    .ice { border-width: 2pt; }
+    .alert { border: 1.5pt solid #000; }
+    a { color: inherit; text-decoration: none; }
+    .doc img { height: auto; max-height: 4in; object-fit: contain; }
+  }
+</style>
+</head>
+<body>
+<header class="bar">
+  <div class="bar-inner">
+    <div class="brand">
+      <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><rect width="26" height="26" rx="6" fill="#b3261e"/><path d="M10.5 5h5v5.5H21v5h-5.5V21h-5v-5.5H5v-5h5.5z" fill="#fff"/></svg>
+      <span>Emergency binder</span>
+    </div>
+    <div class="tools">
+      <button type="button" class="btn" id="edit-btn">Edit</button>
+      <button type="button" class="btn primary" id="save-btn">Save</button>
+      <button type="button" class="btn" id="print-btn">Print</button>
+      <details class="more" id="more">
+        <summary class="btn" aria-label="More actions">More</summary>
+        <div class="more-menu">
+          <button type="button" class="btn" id="download-btn">Download a copy</button>
+          <button type="button" class="btn" id="import-btn">Import from a binder file…</button>
+          <button type="button" class="btn" id="example-btn">Fill in an example</button>
+          <button type="button" class="btn danger" id="erase-btn">Erase everything</button>
+        </div>
+      </details>
+      <input type="file" id="import-file" accept=".html,.htm,.json,text/html,application/json" hidden>
+    </div>
+  </div>
+  <div class="status" id="status" role="status" aria-live="polite"></div>
+</header>
+<main>
+  <div id="banners"></div>
+  <div id="view"></div>
+  <form id="edit" class="editor" hidden></form>
+</main>
+<dialog id="viewer">
+  <div class="dialog-bar"><span id="viewer-name"></span><button type="button" class="btn small" id="viewer-close">Close</button></div>
+  <img id="viewer-img" alt="">
+</dialog>
+<script type="application/json" id="binder-data">null</script>
+<script>
+'use strict';
+
+/* ===================== THE FILE AS A TEMPLATE ===================== */
+// Copy the page as it came out of the file, before anything renders into it. Saving fills this copy with
+// the binder's data and writes it out, so the saved file is this same app with the data inside.
+const TEMPLATE = document.documentElement.cloneNode(true);
+const PROLOGUE = Array.prototype.filter.call(document.childNodes, (n) => n.nodeType === Node.COMMENT_NODE)
+  .map((n) => '<\!--' + n.data + '-->\n').join('');
+
+const FORMAT = 1;
+const DOC_BUDGET = 3 * 1024 * 1024;  // bytes of attached documents, decoded
+const SHRINK_OVER = 400 * 1024;      // photos bigger than this are scaled down...
+const SHRINK_SIDE = 1600;            // ...to at most this many pixels on the long side
+const DRAFT_KEY = 'emergency-binder:draft:' + location.pathname;  // file:// pages can share one localStorage
+
+/* ===================== WHAT A BINDER HOLDS ===================== */
+// [key, label, kind]. kind: text (default), area, date, tel, email, blood.
+const SINGLE = {
+  about: { title: 'About me', fields: [
+    ['name', 'Full name'], ['dob', 'Date of birth', 'date'], ['bloodType', 'Blood type', 'blood'],
+    ['languages', 'Languages spoken'], ['address', 'Home address', 'area'],
+    ['other', 'Other identifying details', 'area'],
+  ] },
+  medical: { title: 'Medical', fields: [
+    ['allergies', 'Allergies', 'area'], ['conditions', 'Medical conditions', 'area'],
+    ['medications', 'Medications and doses', 'area'], ['devices', 'Implants and devices', 'area'],
+    ['directive', 'Advance directive or DNR', 'area'],
+  ] },
+};
+const LISTS = {
+  contacts: { title: 'Emergency contacts', noun: 'contact', hint: 'The first one is shown at the top as the person to call first.', fields: [
+    ['name', 'Name'], ['relation', 'Relationship'], ['phone', 'Phone', 'tel'], ['email', 'Email', 'email'], ['notes', 'Notes', 'area'],
+  ] },
+  doctors: { title: 'Doctors and pharmacy', noun: 'doctor or pharmacy', fields: [
+    ['name', 'Name'], ['role', 'Specialty or role'], ['phone', 'Phone', 'tel'], ['notes', 'Address and notes', 'area'],
+  ] },
+  insurance: { title: 'Insurance', noun: 'policy', fields: [
+    ['kind', 'Type (health, dental, auto, home…)'], ['provider', 'Provider'], ['member', 'Member or policy number'],
+    ['group', 'Group number'], ['phone', 'Phone', 'tel'], ['notes', 'Notes', 'area'],
+  ] },
+};
+const BLOOD_TYPES = ['A+', 'A−', 'B+', 'B−', 'AB+', 'AB−', 'O+', 'O−', 'Unknown'];
+
+function blankBinder() {
+  const b = { about: {}, medical: {}, contacts: [], doctors: [], insurance: [], notes: '', documents: [] };
+  for (const s in SINGLE) for (const [k] of SINGLE[s].fields) b[s][k] = '';
+  return b;
+}
+function blankItem(list) {
+  const o = {};
+  for (const [k] of LISTS[list].fields) o[k] = '';
+  return o;
+}
+function str(v) { return typeof v === 'string' ? v : (typeof v === 'number' ? String(v) : ''); }
+
+const DATA_URL = /^data:[a-z0-9.+-]+\/[a-z0-9.+-]+(;[a-z0-9.+=-]+)*;base64,[a-z0-9+/]*={0,2}$/i;
+
+// Anything read from a file or from storage goes through here, so the rest of the app can trust its shape.
+function normalize(raw) {
+  const r = raw && typeof raw === 'object' ? raw : {};
+  const b = blankBinder();
+  for (const s in SINGLE) {
+    const src = r[s] && typeof r[s] === 'object' ? r[s] : {};
+    for (const [k] of SINGLE[s].fields) b[s][k] = str(src[k]);
+  }
+  for (const l in LISTS) {
+    const src = Array.isArray(r[l]) ? r[l] : [];
+    b[l] = src.filter((it) => it && typeof it === 'object').map((it) => {
+      const o = blankItem(l);
+      for (const k in o) o[k] = str(it[k]);
+      return o;
+    });
+  }
+  b.notes = str(r.notes);
+  b.documents = (Array.isArray(r.documents) ? r.documents : [])
+    .filter((d) => d && typeof d.dataUrl === 'string' && DATA_URL.test(d.dataUrl))
+    .map((d) => ({
+      name: str(d.name) || 'Untitled',
+      type: d.dataUrl.slice(5, d.dataUrl.search(/[;,]/)).toLowerCase(),
+      added: str(d.added),
+      dataUrl: d.dataUrl,
+    }));
+  return b;
+}
+
+// The payload is what's embedded in the file: the binder plus which save it came from.
+function readPayload(obj) {
+  if (obj === null || obj === undefined) return { revision: 0, savedAt: null, binder: blankBinder() };
+  if (typeof obj !== 'object') throw new Error('the binder data is not an object');
+  if (obj.format > FORMAT) throw new Error('it was saved by a newer version of this page');
+  const rev = Number.isInteger(obj.revision) && obj.revision >= 0 ? obj.revision : 0;
+  return { revision: rev, savedAt: typeof obj.savedAt === 'string' ? obj.savedAt : null, binder: normalize(obj.binder) };
+}
+
+function isBlankItem(o) { return Object.keys(o).every((k) => o[k].trim() === ''); }
+function isEmpty(b) {
+  for (const s in SINGLE) if (!isBlankItem(b[s])) return false;
+  for (const l in LISTS) if (b[l].some((it) => !isBlankItem(it))) return false;
+  return b.notes.trim() === '' && b.documents.length === 0;
+}
+
+/* ===================== SAVING ===================== */
+// JSON inside a script element ends at the first "</" + "script", and an HTML comment opener changes how the
+// parser reads it, so every "<" is written as \u003c. JSON.parse reads it back as "<".
+function embedJson(payload) {
+  return JSON.stringify(payload).replace(/</g, '\\u003c');
+}
+
+function buildHtml(payload) {
+  const copy = TEMPLATE.cloneNode(true);
+  copy.querySelector('#binder-data').textContent = embedJson(payload);
+  const name = payload.binder.about.name.trim();
+  copy.querySelector('title').textContent = name ? name + ' · Emergency binder' : 'Emergency binder';
+  // A readable copy for wherever scripts don't run (some file previewers, mail apps). The script redraws it.
+  const footer = 'Revision ' + payload.revision + ', saved ' + formatDate(payload.savedAt, true) + '.';
+  copy.querySelector('#view').replaceChildren(renderView(payload.binder, footer, new Date(payload.savedAt), true));
+  return '<!DOCTYPE html>\n' + PROLOGUE + copy.outerHTML + '\n';
+}
+
+function suggestName(b, savedAt) {
+  const slug = b.about.name.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+  const day = savedAt.slice(0, 10);
+  return 'emergency-binder-' + (slug ? slug + '-' : '') + day + '.html';
+}
+
+function downloadText(text, filename, type) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.hidden = true;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+/* ===================== DRAFTS IN THIS BROWSER ===================== */
+function version(p) { return p ? { revision: p.revision, savedAt: p.savedAt } : null; }
+function sameVersion(a, b) { return !!a && !!b && a.revision === b.revision && a.savedAt === b.savedAt; }
+
+// A draft is kept whenever the binder differs from what's in the open file, even after a download: the
+// download may have gone wrong, and the open file still holds the old data until it's replaced.
+function makeDraft(st) {
+  if (JSON.stringify(st.binder) === JSON.stringify(st.file.binder)) return null;
+  return {
+    file: version(st.file),
+    saved: st.saved.revision !== st.file.revision || st.saved.savedAt !== st.file.savedAt
+      ? { revision: st.saved.revision, savedAt: st.saved.savedAt, filename: st.saved.filename, how: st.saved.how } : null,
+    clean: !isDirty(st),
+    at: new Date().toISOString(),
+    binder: st.binder,
+  };
+}
+function writeDraft(store, key, st) {
+  try {
+    const d = makeDraft(st);
+    if (d) store.setItem(key, JSON.stringify(d)); else store.removeItem(key);
+    return true;
+  } catch (e) { return false; }  // full (big attachments) or not allowed (private mode)
+}
+function readDraft(store, key) {
+  try {
+    const d = JSON.parse(store.getItem(key));
+    return d && typeof d === 'object' && d.binder && d.file ? d : null;
+  } catch (e) { return null; }
+}
+
+// What to do with a draft found when the page opens.
+//  restore:  it was made on this very file.
+//  drop:     this file is the copy it was saved to, and nothing changed since.
+//  resume:   this file is the copy it was saved to, and there were more edits after.
+//  conflict: it belongs to some other version of the file; ask.
+function resolveDraft(file, d) {
+  if (!d) return 'none';
+  if (sameVersion(d.file, file)) return 'restore';
+  if (sameVersion(d.saved, file)) return d.clean ? 'drop' : 'resume';
+  return 'conflict';
+}
+
+/* ===================== STATE ===================== */
+const S = {
+  file: null,       // the payload embedded in the open file
+  binder: null,     // the binder being shown and edited
+  saved: null,      // the last save: { revision, savedAt, json, filename, how }
+  minRevision: 0,   // an import can carry a higher revision; the next save goes past it
+  editing: false,
+  handle: null,     // File System Access handle, where supported
+  draftOk: true,
+  loadError: null,
+  conflict: null,
+};
+function isDirty(st) { return JSON.stringify(st.binder) !== st.saved.json; }
+
+function load() {
+  try {
+    S.file = readPayload(JSON.parse(document.getElementById('binder-data').textContent));
+  } catch (e) {
+    S.loadError = e.message;
+    S.file = readPayload(null);
+  }
+  S.binder = structuredClone(S.file.binder);
+  S.saved = { revision: S.file.revision, savedAt: S.file.savedAt, json: JSON.stringify(S.file.binder), filename: null, how: 'file' };
+  const d = readDraft(storage(), DRAFT_KEY);
+  const action = S.loadError ? 'none' : resolveDraft(S.file, d);
+  if (action === 'restore') {
+    S.binder = normalize(d.binder);
+    if (d.saved) S.saved = { revision: d.saved.revision, savedAt: d.saved.savedAt, filename: d.saved.filename, how: d.saved.how === 'file' ? 'file' : 'download', json: d.clean ? JSON.stringify(S.binder) : null };
+  } else if (action === 'resume') {
+    S.binder = normalize(d.binder);
+  } else if (action === 'drop') {
+    try { storage().removeItem(DRAFT_KEY); } catch (e) { /* nothing to drop */ }
+  } else if (action === 'conflict') {
+    S.conflict = d;
+  }
+}
+function storage() { try { return window.localStorage; } catch (e) { return null; } }
+
+let draftTimer = 0;
+function changed() {
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(flushDraft, 300);
+  renderStatus();
+}
+function flushDraft() {
+  clearTimeout(draftTimer);
+  const store = storage();
+  const ok = store ? writeDraft(store, DRAFT_KEY, S) : false;
+  if (ok !== S.draftOk) { S.draftOk = ok; renderStatus(); }
+}
+
+async function save(forceDownload) {
+  const savedAt = new Date().toISOString();
+  const revision = Math.max(S.file.revision, S.saved.revision, S.minRevision) + 1;
+  const binder = structuredClone(S.binder);
+  const html = buildHtml({ format: FORMAT, revision, savedAt, binder });
+  const filename = suggestName(binder, savedAt);
+  let how = 'download', where = filename;
+  if (!forceDownload && typeof window.showSaveFilePicker === 'function') {
+    try {
+      if (!S.handle) {
+        S.handle = await window.showSaveFilePicker({ suggestedName: filename, types: [{ description: 'Web page', accept: { 'text/html': ['.html'] } }] });
+      }
+      const w = await S.handle.createWritable();
+      await w.write(html);
+      await w.close();
+      how = 'file'; where = S.handle.name;
+    } catch (e) {
+      S.handle = null;
+      if (e && e.name === 'AbortError') return;  // the person canceled the picker
+      // Anything else (no permission, inside a frame): fall back to a download.
+    }
+  }
+  if (how === 'download') downloadText(html, filename, 'text/html');
+  S.saved = { revision, savedAt, json: JSON.stringify(binder), filename: where, how };
+  flushDraft();
+  renderView0();
+  renderStatus();
+}
+
+/* ===================== FORMATTING ===================== */
+function h(tag, props, ...kids) {
+  const el = document.createElement(tag);
+  for (const k in props || {}) {
+    const v = props[k];
+    if (v === null || v === undefined || v === false) continue;
+    if (k === 'class') el.className = v;
+    else if (k === 'text') el.textContent = v;
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else if (k === 'value') el.value = v;
+    else el.setAttribute(k, v === true ? '' : v);
+  }
+  for (const kid of kids.flat(Infinity)) if (kid !== null && kid !== undefined && kid !== false) el.append(kid);
+  return el;
+}
+function telHref(phone) {
+  const t = phone.replace(/[^\d+*#]/g, '');
+  return /\d{3}/.test(t) ? 'tel:' + t : null;
+}
+function formatDate(iso, withTime) {
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  return withTime ? d.toLocaleString(undefined, { dateStyle: 'long', timeStyle: 'short' }) : d.toLocaleDateString(undefined, { dateStyle: 'long' });
+}
+function formatDob(dob) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dob);
+  if (!m) return dob;
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  return d.toLocaleDateString(undefined, { dateStyle: 'long', timeZone: 'UTC' });
+}
+function ageOn(dob, now) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dob);
+  if (!m) return null;
+  let age = now.getFullYear() - +m[1];
+  if (now.getMonth() + 1 < +m[2] || (now.getMonth() + 1 === +m[2] && now.getDate() < +m[3])) age--;
+  return age >= 0 && age < 150 ? age : null;
+}
+function docBytes(d) {
+  const b64 = d.dataUrl.slice(d.dataUrl.indexOf(',') + 1);
+  return Math.floor(b64.length * 3 / 4) - (b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0);
+}
+function totalBytes(docs) { return docs.reduce((n, d) => n + docBytes(d), 0); }
+function formatBytes(n) {
+  if (n < 1024) return n + ' bytes';
+  if (n < 1024 * 1024) return Math.round(n / 1024) + ' KB';
+  return (n / 1024 / 1024).toFixed(1) + ' MB';
+}
+function dataUrlToBlob(dataUrl) {
+  const i = dataUrl.indexOf(',');
+  const bin = atob(dataUrl.slice(i + 1));
+  const bytes = new Uint8Array(bin.length);
+  for (let j = 0; j < bin.length; j++) bytes[j] = bin.charCodeAt(j);
+  return new Blob([bytes], { type: dataUrl.slice(5, dataUrl.search(/[;,]/)) });
+}
+function isImage(d) { return /^image\/(png|jpeg|gif|webp|avif|bmp)$/.test(d.type); }
+function extLabel(d) { const m = /\.([a-z0-9]{1,5})$/i.exec(d.name); return (m ? m[1] : d.type.split('/')[1] || 'file').toUpperCase(); }
+
+/* ===================== READING VIEW (also what prints) ===================== */
+// isStatic: for the copy written into a saved file, with no buttons, and documents listed but not repeated
+// as images (they're already in the data once).
+function renderView(b, footerText, now, isStatic) {
+  const out = h('div');
+  if (isEmpty(b)) {
+    out.append(h('section', { class: 'card empty' },
+      h('h2', { text: 'This binder is empty' }),
+      h('p', { text: 'Press Edit to add your medical information, emergency contacts and insurance numbers, then Save to keep a copy of this page with them inside. Everything stays on your device.' }),
+      isStatic ? null : h('p', { class: 'no-print' },
+        h('button', { type: 'button', class: 'btn primary', text: 'Start filling it in', onclick: () => setEditing(true) }), ' ',
+        h('button', { type: 'button', class: 'btn', text: 'See an example', onclick: fillExample }))));
+    return out;
+  }
+  const a = b.about, m = b.medical;
+  const vitals = [];
+  if (a.dob) {
+    const age = ageOn(a.dob, now);
+    vitals.push(h('span', null, 'Born ', h('b', { text: formatDob(a.dob) }), age === null ? '' : ' (age ' + age + ')'));
+  }
+  if (a.bloodType) vitals.push(h('span', null, 'Blood type ', h('b', { text: a.bloodType })));
+  if (a.languages) vitals.push(h('span', null, 'Speaks ', h('b', { text: a.languages })));
+  const first = b.contacts.find((c) => !isBlankItem(c));
+  const ice = h('section', { class: 'card ice' },
+    h('p', { class: 'eyebrow', text: 'In case of emergency' }),
+    h('h2', { text: a.name || 'Name not entered' }),
+    vitals.length ? h('p', { class: 'vitals' }, vitals.flatMap((v, i) => (i ? [' · ', v] : [v]))) : null,
+    m.allergies ? h('div', { class: 'alert' }, h('strong', { text: 'Allergies' }), h('p', { class: 'text', text: m.allergies })) : null,
+    first ? h('p', { class: 'vitals' }, 'Call first: ', h('b', { text: first.name || 'Unnamed contact' }),
+      first.relation ? ' (' + first.relation + ')' : '', first.phone ? ' · ' : '', first.phone ? phoneLink(first.phone) : '') : null);
+  out.append(ice);
+
+  const medical = SINGLE.medical.fields.filter(([k]) => k !== 'allergies' && m[k]);
+  if (medical.length) out.append(dlCard(SINGLE.medical.title, medical, m));
+  const about = SINGLE.about.fields.filter(([k]) => ['address', 'other'].includes(k) && a[k]);
+  if (about.length) out.append(dlCard(SINGLE.about.title, about, a));
+  for (const l in LISTS) {
+    const items = b[l].filter((it) => !isBlankItem(it));
+    if (!items.length) continue;
+    out.append(h('section', { class: 'card' }, h('h2', { text: LISTS[l].title }),
+      h('div', { class: 'people' }, items.map((it) => personBlock(l, it)))));
+  }
+  if (b.notes.trim()) out.append(h('section', { class: 'card' }, h('h2', { text: 'Notes' }), h('p', { class: 'text', text: b.notes })));
+  if (b.documents.length) {
+    out.append(h('section', { class: 'card' }, h('h2', { text: 'Documents' }),
+      h('div', { class: 'docs' }, b.documents.map((d) => h('figure', { class: 'doc' },
+        isImage(d) && !isStatic
+          ? h('button', { type: 'button', class: 'thumb', 'aria-label': 'View ' + d.name, onclick: () => showImage(d) }, h('img', { src: d.dataUrl, alt: d.name }))
+          : h('div', { class: 'file-chip', text: extLabel(d) }),
+        h('figcaption', null, d.name, ' ', isStatic ? null : h('button', { type: 'button', class: 'btn small no-print', text: 'Save', onclick: () => saveDocument(d) })))))));
+  }
+  out.append(h('p', { class: 'colophon', text: footerText }));
+  return out;
+}
+function phoneLink(phone) {
+  const href = telHref(phone);
+  return href ? h('a', { href, class: 'phone', text: phone }) : h('span', { class: 'phone', text: phone });
+}
+function dlCard(title, fields, obj) {
+  return h('section', { class: 'card' }, h('h2', { text: title }),
+    h('dl', null, fields.map(([k, label]) => [h('dt', { text: label }), h('dd', { text: obj[k] })])));
+}
+function personBlock(list, it) {
+  const title = list === 'insurance' ? [it.kind, it.provider].filter(Boolean).join(' · ') : it.name;
+  const role = list === 'insurance' ? null : (list === 'contacts' ? it.relation : it.role);
+  const lines = [];
+  if (list === 'insurance') {
+    if (it.member) lines.push(h('p', null, 'Member/policy ', h('b', { text: it.member })));
+    if (it.group) lines.push(h('p', null, 'Group ', h('b', { text: it.group })));
+  }
+  if (it.phone) lines.push(h('p', null, phoneLink(it.phone)));
+  if (it.email) lines.push(h('p', null, h('a', { href: 'mailto:' + it.email, text: it.email })));
+  if (it.notes) lines.push(h('p', { class: 'text', text: it.notes }));
+  return h('div', { class: 'person' }, h('p', { class: 'who', text: title || 'Unnamed' }),
+    role ? h('p', { class: 'role', text: role }) : null, lines);
+}
+
+/* ===================== EDITING ===================== */
+function fieldId(path) { return 'f-' + path.replace(/\./g, '-'); }
+function fieldEl(path, label, kind, value) {
+  const id = fieldId(path);
+  let input;
+  if (kind === 'area') input = h('textarea', { id, 'data-path': path, rows: 3, value });
+  else input = h('input', {
+    id, 'data-path': path, value,
+    type: kind === 'date' ? 'date' : kind === 'tel' ? 'tel' : kind === 'email' ? 'email' : 'text',
+    autocomplete: 'off', list: kind === 'blood' ? 'blood-types' : null,
+  });
+  return h('div', { class: 'field' }, h('label', { for: id, text: label }), input);
+}
+function renderEditor(b) {
+  const out = document.createDocumentFragment();
+  out.append(h('datalist', { id: 'blood-types' }, BLOOD_TYPES.map((t) => h('option', { value: t }))));
+  for (const s in SINGLE) {
+    out.append(h('fieldset', null, h('legend', { text: SINGLE[s].title }),
+      h('div', { class: 'row2' }, SINGLE[s].fields.filter(([, , k]) => k !== 'area').map(([k, label, kind]) => fieldEl(s + '.' + k, label, kind, b[s][k]))),
+      SINGLE[s].fields.filter(([, , k]) => k === 'area').map(([k, label, kind]) => fieldEl(s + '.' + k, label, kind, b[s][k]))));
+  }
+  for (const l in LISTS) {
+    const L = LISTS[l];
+    out.append(h('fieldset', null, h('legend', { text: L.title }),
+      L.hint ? h('p', { class: 'hint', text: L.hint }) : null,
+      b[l].map((it, i) => h('div', { class: 'item' },
+        h('div', { class: 'item-head' }, h('span', { text: cap(L.noun) + ' ' + (i + 1) }),
+          h('button', { type: 'button', class: 'btn small danger', 'data-remove': l + '.' + i, text: 'Remove' })),
+        h('div', { class: 'row2' }, L.fields.filter(([, , k]) => k !== 'area').map(([k, label, kind]) => fieldEl(l + '.' + i + '.' + k, label, kind, it[k]))),
+        L.fields.filter(([, , k]) => k === 'area').map(([k, label, kind]) => fieldEl(l + '.' + i + '.' + k, label, kind, it[k])))),
+      h('button', { type: 'button', class: 'btn', 'data-add': l, text: 'Add a ' + L.noun })));
+  }
+  out.append(h('fieldset', null, h('legend', { text: 'Notes' }),
+    h('p', { class: 'hint', text: 'Anything else: pets and who can care for them, where the spare key is, how to shut off the water and gas.' }),
+    h('div', { class: 'field' }, h('label', { for: 'f-notes', text: 'Notes' }), h('textarea', { id: 'f-notes', 'data-path': 'notes', rows: 6, value: b.notes }))));
+  const used = totalBytes(b.documents);
+  out.append(h('fieldset', null, h('legend', { text: 'Documents' }),
+    h('p', { class: 'hint', text: 'Photos or scans of insurance cards, ID, a medication list or a care plan. Large photos are shrunk to save space.' }),
+    b.documents.map((d, i) => h('div', { class: 'doc-row' },
+      isImage(d) ? h('img', { src: d.dataUrl, alt: '' }) : h('span', { class: 'mini', text: extLabel(d) }),
+      h('input', { type: 'text', 'data-path': 'documents.' + i + '.name', value: d.name, 'aria-label': 'Name of document ' + (i + 1) }),
+      h('span', { class: 'size', text: formatBytes(docBytes(d)) }),
+      h('button', { type: 'button', class: 'btn small danger', 'data-remove': 'documents.' + i, text: 'Remove' }))),
+    h('div', { class: 'budget' }, h('meter', { min: 0, max: DOC_BUDGET, value: used, low: DOC_BUDGET * 0.7, high: DOC_BUDGET * 0.9, optimum: 0, 'aria-label': 'Space used by documents' }),
+      formatBytes(used) + ' of ' + formatBytes(DOC_BUDGET) + ' used'),
+    h('label', { class: 'field file-pick' }, h('span', { text: 'Add documents' }), h('input', { type: 'file', id: 'doc-file', multiple: true })),
+    h('p', { class: 'msg', id: 'doc-msg', role: 'alert' })));
+  out.append(h('p', null, h('button', { type: 'button', class: 'btn primary', text: 'Done editing', onclick: () => setEditing(false) })));
+  return out;
+}
+function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+
+function setPath(b, path, value) {
+  const keys = path.split('.');
+  let o = b;
+  for (let i = 0; i < keys.length - 1; i++) o = o[keys[i]];
+  o[keys[keys.length - 1]] = value;
+}
+
+function readDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(blob);
+  });
+}
+async function shrinkImage(file) {
+  if (!/^image\/(jpeg|png|webp)$/.test(file.type) || file.size <= SHRINK_OVER || typeof createImageBitmap !== 'function') return file;
+  try {
+    const bmp = await createImageBitmap(file);
+    const scale = Math.min(1, SHRINK_SIDE / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas');
+    c.width = Math.round(bmp.width * scale); c.height = Math.round(bmp.height * scale);
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+    ctx.drawImage(bmp, 0, 0, c.width, c.height);
+    const blob = await new Promise((resolve) => c.toBlob(resolve, 'image/jpeg', 0.85));
+    if (!blob || blob.size >= file.size) return file;
+    return new File([blob], file.name.replace(/\.[a-z0-9]+$/i, '') + '.jpg', { type: 'image/jpeg' });
+  } catch (e) { return file; }
+}
+async function addDocuments(files) {
+  const msgs = [];
+  for (const f of files) {
+    const small = await shrinkImage(f);
+    const left = DOC_BUDGET - totalBytes(S.binder.documents);
+    if (small.size > left) { msgs.push(f.name + ' is ' + formatBytes(small.size) + ', and only ' + formatBytes(Math.max(0, left)) + ' is left.'); continue; }
+    let dataUrl = await readDataUrl(small);
+    if (!/;base64,/.test(dataUrl)) dataUrl = dataUrl.replace(/^data:,/, 'data:application/octet-stream;base64,');
+    if (/^data:;base64,/.test(dataUrl)) dataUrl = dataUrl.replace(/^data:;/, 'data:application/octet-stream;');
+    if (!DATA_URL.test(dataUrl)) { msgs.push(f.name + ' could not be read.'); continue; }
+    S.binder.documents.push(normalize({ documents: [{ name: small.name, dataUrl, added: new Date().toISOString() }] }).documents[0]);
+  }
+  renderAll();
+  changed();
+  const msg = document.getElementById('doc-msg');
+  if (msg) msg.textContent = msgs.join(' ');
+}
+
+function saveDocument(d) {
+  const url = URL.createObjectURL(dataUrlToBlob(d.dataUrl));
+  const a = h('a', { href: url, download: d.name, hidden: true });
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+function showImage(d) {
+  document.getElementById('viewer-img').src = d.dataUrl;
+  document.getElementById('viewer-img').alt = d.name;
+  document.getElementById('viewer-name').textContent = d.name;
+  document.getElementById('viewer').showModal();
+}
+
+/* ===================== IMPORT ===================== */
+function extractPayload(text) {
+  let obj;
+  if (/^\s*\{/.test(text)) obj = JSON.parse(text);
+  else {
+    const el = new DOMParser().parseFromString(text, 'text/html').getElementById('binder-data');
+    if (!el) throw new Error('That file isn’t an emergency binder.');
+    obj = JSON.parse(el.textContent);
+  }
+  if (obj && typeof obj === 'object' && !('binder' in obj)) obj = { format: FORMAT, binder: obj };  // a bare binder
+  const p = readPayload(obj);
+  if (isEmpty(p.binder)) throw new Error('That binder is empty.');
+  return p;
+}
+async function importFile(f) {
+  let p;
+  try { p = extractPayload(await f.text()); } catch (e) { alert('Couldn’t import ' + f.name + ': ' + e.message); return; }
+  if (!isEmpty(S.binder) && !confirm('Replace everything in this binder with what’s in ' + f.name + '?')) return;
+  S.binder = p.binder;
+  S.minRevision = Math.max(S.minRevision, p.revision);
+  renderAll();
+  changed();
+}
+
+/* ===================== EXAMPLE ===================== */
+function exampleBinder() {
+  return normalize({
+    about: { name: 'Alex Rivera', dob: '1984-03-09', bloodType: 'O+', languages: 'English, Spanish', address: '1200 Example Avenue, Apt 4\nSpringfield, ST 00000', other: 'Wears glasses. Tattoo of a compass on the left forearm.' },
+    medical: {
+      allergies: 'Penicillin (hives, trouble breathing)\nBee stings: carries an EpiPen in the backpack',
+      conditions: 'Type 1 diabetes\nMild asthma',
+      medications: 'Insulin glargine, 18 units at bedtime\nInsulin lispro with meals, by carb count\nAlbuterol inhaler as needed',
+      devices: 'Continuous glucose monitor on the upper left arm',
+      directive: 'Full treatment. Copy of health care proxy in Documents.',
+    },
+    contacts: [
+      { name: 'Sam Rivera', relation: 'Spouse', phone: '(555) 010-0142', email: 'sam@example.com', notes: 'Has a key to the apartment.' },
+      { name: 'Jordan Lee', relation: 'Sister', phone: '(555) 010-0178', notes: 'Lives 20 minutes away.' },
+    ],
+    doctors: [
+      { name: 'Dr. Priya Patel', role: 'Endocrinologist', phone: '(555) 010-0110', notes: 'Springfield Diabetes Center' },
+      { name: 'Main Street Pharmacy', role: 'Pharmacy', phone: '(555) 010-0199' },
+    ],
+    insurance: [
+      { kind: 'Health', provider: 'Example Health Plan', member: 'XHP123456789', group: '00451', phone: '(555) 010-0100' },
+      { kind: 'Dental', provider: 'Example Dental', member: 'D-998877' },
+    ],
+    notes: 'Cat named Pepper: food is in the hall closet. Neighbor in 4B (Chris) can feed her.\nWater shutoff is under the kitchen sink.',
+  });
+}
+function fillExample() {
+  if (!isEmpty(S.binder) && !confirm('Replace everything in this binder with an example?')) return;
+  S.binder = exampleBinder();
+  setEditing(false);
+  changed();
+}
+
+/* ===================== PAGE ===================== */
+function footerText() {
+  const rev = S.saved.revision;
+  let t = rev ? 'Revision ' + rev + ', saved ' + formatDate(S.saved.savedAt, true) : 'Not saved yet';
+  if (rev && isDirty(S)) t += ', with changes since';
+  return t + '. Printed or viewed ' + formatDate(new Date().toISOString(), true) + '.';
+}
+function renderView0() { document.getElementById('view').replaceChildren(renderView(S.binder, footerText(), new Date())); }
+function renderAll() {
+  document.getElementById('edit').hidden = !S.editing;
+  document.getElementById('view').hidden = S.editing;
+  document.getElementById('edit-btn').textContent = S.editing ? 'Done' : 'Edit';
+  document.getElementById('edit-btn').setAttribute('aria-pressed', String(S.editing));
+  if (S.editing) document.getElementById('edit').replaceChildren(renderEditor(S.binder));
+  renderView0();
+  renderBanners();
+  renderStatus();
+}
+function setEditing(on) {
+  S.editing = on;
+  renderAll();
+  window.scrollTo(0, 0);
+  if (on) { const first = document.querySelector('#edit input, #edit textarea'); if (first) first.focus({ preventScroll: true }); }
+}
+function statusParts() {
+  const s = S.saved;
+  if (isDirty(S)) {
+    return { cls: 'warn', label: 'Unsaved changes', text: S.draftOk ? 'Kept in this browser until you save.' : 'Too big to keep in this browser, so save before you close the page.' };
+  }
+  if (!s.revision) return { cls: 'ok', label: 'Nothing to save', text: '' };
+  if (sameVersion(s, S.file)) return { cls: 'ok', label: 'Saved', text: 'Revision ' + s.revision + ', ' + formatDate(s.savedAt, true) + '.' };
+  if (s.how === 'file') return { cls: 'ok', label: 'Saved', text: 'Revision ' + s.revision + ' saved to ' + s.filename + '.' };
+  return { cls: 'warn', label: 'Saved as a new file', text: 'Revision ' + s.revision + ' was downloaded as ' + s.filename + '. This page still holds ' + (S.file.revision ? 'revision ' + S.file.revision : 'the blank binder') + ', so open the new file from now on.' };
+}
+let lastStatus = '';
+function renderStatus() {
+  const p = statusParts();
+  if (p.label + p.text !== lastStatus) {  // don't make screen readers repeat it on every keystroke
+    lastStatus = p.label + p.text;
+    document.getElementById('status').replaceChildren(h('span', { class: 'pill ' + p.cls, text: p.label }), p.text);
+  }
+  const name = S.binder.about.name.trim();
+  document.title = (isDirty(S) ? '• ' : '') + (name ? name + ' · ' : '') + 'Emergency binder';
+  document.getElementById('example-btn').hidden = !isEmpty(S.binder);
+}
+function renderBanners() {
+  const box = document.getElementById('banners');
+  box.replaceChildren();
+  if (S.loadError) box.append(h('div', { class: 'banner bad' }, h('p', { text: 'The information in this file couldn’t be read (' + S.loadError + '). Saving now would save an empty binder. Try opening another copy, or Import it into a fresh one.' })));
+  if (S.conflict) {
+    const d = S.conflict;
+    box.append(h('div', { class: 'banner' },
+      h('p', { text: 'This browser has unsaved changes to a binder at this address from ' + formatDate(d.at, true) + '. They were made to ' + (d.file.revision ? 'revision ' + d.file.revision : 'an unsaved binder') + ', and this file is ' + (S.file.revision ? 'revision ' + S.file.revision : 'empty') + '.' }),
+      h('p', null,
+        h('button', { type: 'button', class: 'btn', text: 'Use those changes', onclick: () => { S.binder = normalize(d.binder); S.conflict = null; renderAll(); changed(); } }), ' ',
+        h('button', { type: 'button', class: 'btn', text: 'Discard them', onclick: () => { S.conflict = null; flushDraft(); renderAll(); } }))));
+  }
+}
+
+function wire() {
+  const edit = document.getElementById('edit');
+  edit.addEventListener('submit', (e) => e.preventDefault());
+  edit.addEventListener('input', (e) => {
+    const path = e.target.getAttribute('data-path');
+    if (!path) return;
+    setPath(S.binder, path, e.target.value);
+    changed();
+  });
+  edit.addEventListener('change', (e) => {
+    if (e.target.id === 'doc-file' && e.target.files.length) addDocuments(Array.from(e.target.files));
+  });
+  edit.addEventListener('click', (e) => {
+    const add = e.target.getAttribute('data-add'), rem = e.target.getAttribute('data-remove');
+    if (add) {
+      S.binder[add].push(blankItem(add));
+      renderAll(); changed();
+      const items = edit.querySelectorAll('[data-path^="' + add + '.' + (S.binder[add].length - 1) + '."]');
+      if (items[0]) items[0].focus();
+    } else if (rem) {
+      const [list, i] = rem.split('.');
+      S.binder[list].splice(+i, 1);
+      renderAll(); changed();
+    }
+  });
+  document.getElementById('edit-btn').addEventListener('click', () => setEditing(!S.editing));
+  document.getElementById('save-btn').addEventListener('click', () => save(false));
+  document.getElementById('print-btn').addEventListener('click', () => window.print());
+  const more = document.getElementById('more');
+  const closeMore = () => { more.open = false; };
+  document.getElementById('download-btn').addEventListener('click', () => { closeMore(); save(true); });
+  document.getElementById('import-btn').addEventListener('click', () => { closeMore(); document.getElementById('import-file').click(); });
+  document.getElementById('import-file').addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) importFile(f); });
+  document.getElementById('example-btn').addEventListener('click', () => { closeMore(); fillExample(); });
+  document.getElementById('erase-btn').addEventListener('click', () => {
+    closeMore();
+    if (isEmpty(S.binder) || !confirm('Erase everything in this binder? The file keeps the old information until you save.')) return;
+    S.binder = blankBinder();
+    renderAll(); changed();
+  });
+  document.addEventListener('click', (e) => { if (more.open && !more.contains(e.target)) closeMore(); });
+  document.getElementById('viewer-close').addEventListener('click', () => document.getElementById('viewer').close());
+  window.addEventListener('beforeprint', renderView0);
+  window.addEventListener('pagehide', flushDraft);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushDraft(); });
+  window.addEventListener('beforeunload', (e) => { if (isDirty(S)) { flushDraft(); e.preventDefault(); e.returnValue = ''; } });
+}
+
+/* ===================== SELF TEST (runs only with #test) ===================== */
+function selfTest() {
+  const fails = [];
+  let n = 0;
+  function ok(cond, name, detail) { n++; if (!cond) fails.push(name + (detail !== undefined ? ' — got ' + detail : '')); }
+  function memStore(full) {
+    const m = new Map();
+    return {
+      getItem: (k) => (m.has(k) ? m.get(k) : null),
+      setItem: (k, v) => { if (full) throw new DOMException('full', 'QuotaExceededError'); m.set(k, String(v)); },
+      removeItem: (k) => m.delete(k), size: () => m.size,
+    };
+  }
+  try {
+    const ex = exampleBinder();
+    const tricky = structuredClone(ex);
+    tricky.notes = 'Ends <\/script><\script>alert(1)<\/script> and <\!-- a comment, and \u2028 too';
+    tricky.documents = [{ name: 'card.png', type: 'image/png', added: '', dataUrl: 'data:image/png;base64,iVBORw0KGgo=' }];
+
+    // embedding
+    const emb = embedJson({ format: 1, binder: tricky });
+    ok(!emb.includes('<'), 'embedded JSON has no "<" left in it');
+    ok(JSON.parse(emb).binder.notes === tricky.notes, 'embedded JSON reads back unchanged');
+
+    // the saved file
+    const payload = { format: FORMAT, revision: 7, savedAt: '2026-11-24T15:00:00.000Z', binder: tricky };
+    const html = buildHtml(payload);
+    ok(html.startsWith('<!DOCTYPE html>\n<\!--\n  Emergency binder'), 'saved file starts with the doctype and header comment');
+    ok(html.endsWith('</html>\n'), 'saved file ends with </html> and a newline');
+    ok(!html.includes('\r'), 'saved file has LF line endings');
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const csp = doc.querySelector('meta[http-equiv="Content-Security-Policy"]');
+    ok(csp && csp.content.includes("default-src 'none'"), 'saved file keeps the Content-Security-Policy');
+    ok(doc.querySelectorAll('#binder-data').length === 1, 'saved file has exactly one data block', doc.querySelectorAll('#binder-data').length);
+    ok(doc.querySelectorAll('script').length === 2, 'the data cannot open a script element of its own', doc.querySelectorAll('script').length);
+    const back = readPayload(JSON.parse(doc.getElementById('binder-data').textContent));
+    ok(back.revision === 7 && back.savedAt === payload.savedAt, 'saved file keeps revision and date');
+    ok(JSON.stringify(back.binder) === JSON.stringify(normalize(tricky)), 'saved file round-trips the binder');
+    ok(doc.querySelector('#view .ice h2') && doc.querySelector('#view .ice h2').textContent === 'Alex Rivera', 'saved file is readable without scripts');
+    ok(!doc.querySelector('#view img, #view button') && doc.getElementById('edit').children.length === 0, 'the readable copy has no images, buttons or editor');
+    ok(!doc.getElementById('test-report'), 'saved file has no test report');
+    ok(doc.title === 'Alex Rivera · Emergency binder', 'saved file is titled with the name', doc.title);
+    ok(JSON.stringify(extractPayload(html).binder) === JSON.stringify(normalize(tricky)), 'import reads a saved file back');
+    ok(extractPayload(JSON.stringify(ex)).binder.about.name === 'Alex Rivera', 'import reads a bare JSON binder');
+    let threw = false;
+    try { extractPayload('<!DOCTYPE html><p>hello</p>'); } catch (e) { threw = true; }
+    ok(threw, 'import refuses a page that is not a binder');
+    threw = false;
+    try { readPayload({ format: FORMAT + 1, binder: {} }); } catch (e) { threw = true; }
+    ok(threw, 'a binder from a newer format is refused, not misread');
+
+    // reading untrusted data
+    const blank = readPayload(null);
+    ok(blank.revision === 0 && isEmpty(blank.binder), 'an empty file opens as a blank binder');
+    const odd = normalize({ about: { name: 42, dob: { x: 1 } }, contacts: [null, 'x', { name: 'A', phone: 5, extra: 'drop me' }],
+      documents: [{ name: 'evil', dataUrl: 'javascript:alert(1)' }, { name: 'ok.png', dataUrl: 'data:image/png;base64,iVBORw0KGgo=' }, { dataUrl: 'data:text/html,<\script>' }] });
+    ok(odd.about.name === '42' && odd.about.dob === '', 'non-string fields are coerced or dropped');
+    ok(odd.contacts.length === 1 && odd.contacts[0].phone === '5' && !('extra' in odd.contacts[0]), 'bad list items and unknown keys are dropped');
+    ok(odd.documents.length === 1 && odd.documents[0].type === 'image/png', 'only base64 data: URLs are kept as documents', odd.documents.length);
+    ok(isEmpty(normalize({ contacts: [{ name: '  ' }] })), 'a binder with only blank entries counts as empty');
+
+    // drafts
+    const st = (fileRev, savedRev, binder, savedJson) => ({
+      file: { revision: fileRev, savedAt: 'f' + fileRev, binder: ex },
+      saved: { revision: savedRev, savedAt: 'f' + savedRev, json: savedJson, filename: 'x.html' },
+      binder,
+    });
+    const store = memStore(false);
+    ok(writeDraft(store, 'k', st(1, 1, ex, JSON.stringify(ex))) && store.size() === 0, 'no draft is kept when nothing changed');
+    const edited = structuredClone(ex); edited.notes = 'changed';
+    ok(writeDraft(store, 'k', st(1, 1, edited, JSON.stringify(ex))) && store.size() === 1, 'a draft is kept after an edit');
+    const d1 = readDraft(store, 'k');
+    ok(d1 && d1.binder.notes === 'changed' && d1.clean === false && d1.saved === null, 'the draft holds the edit and is marked unsaved');
+    ok(resolveDraft({ revision: 1, savedAt: 'f1' }, d1) === 'restore', 'a draft made on this file is restored');
+    ok(resolveDraft({ revision: 2, savedAt: 'f2' }, d1) === 'conflict', 'a draft made on another version asks first');
+    writeDraft(store, 'k', st(1, 2, edited, JSON.stringify(edited)));
+    const d2 = readDraft(store, 'k');
+    ok(d2 && d2.clean === true && d2.saved && d2.saved.revision === 2, 'after a download the draft remembers the new revision');
+    ok(resolveDraft({ revision: 2, savedAt: 'f2' }, d2) === 'drop', 'opening the saved copy drops a clean draft');
+    ok(resolveDraft({ revision: 2, savedAt: 'f2' }, Object.assign({}, d2, { clean: false })) === 'resume', 'opening the saved copy keeps later edits');
+    ok(resolveDraft({ revision: 1, savedAt: 'f1' }, d2) === 'restore', 'reopening the old file still shows the downloaded edits');
+    ok(resolveDraft({ revision: 1, savedAt: 'f1' }, null) === 'none', 'no draft, nothing to do');
+    ok(writeDraft(memStore(true), 'k', st(1, 1, edited, JSON.stringify(ex))) === false, 'a full storage is reported, not thrown');
+    store.setItem('k', '{not json');
+    ok(readDraft(store, 'k') === null, 'an unreadable draft is ignored');
+
+    // formatting
+    ok(suggestName(normalize({ about: { name: 'José O’Neil' } }), '2026-11-24T15:00:00Z') === 'emergency-binder-jose-o-neil-2026-11-24.html', 'file name from the person’s name and date', suggestName(normalize({ about: { name: 'José O’Neil' } }), '2026-11-24T15:00:00Z'));
+    ok(suggestName(blankBinder(), '2026-11-24T15:00:00Z') === 'emergency-binder-2026-11-24.html', 'file name without a name');
+    ok(telHref('(555) 010-0142') === 'tel:5550100142', 'phone numbers become tel: links');
+    ok(telHref('+44 20 7946 0000') === 'tel:+442079460000', 'tel: links keep + and digits');
+    ok(telHref('ask at desk') === null, 'text without a number is not linked');
+    ok(ageOn('1984-03-09', new Date(2026, 2, 8)) === 41 && ageOn('1984-03-09', new Date(2026, 2, 9)) === 42, 'age turns over on the birthday');
+    ok(ageOn('soon', new Date()) === null, 'no age for an unreadable date');
+    const tiny = { dataUrl: 'data:text/plain;base64,aGVsbG8=' };
+    ok(docBytes(tiny) === 5 && dataUrlToBlob(tiny.dataUrl).size === 5, 'document size is the decoded size');
+    ok(formatBytes(3 * 1024 * 1024) === '3.0 MB' && formatBytes(2048) === '2 KB', 'byte sizes are readable');
+
+    // rendering
+    const view = renderView(ex, 'footer', new Date(2026, 10, 24));
+    ok(view.querySelector('.ice h2').textContent === 'Alex Rivera', 'the emergency card shows the name');
+    ok(view.querySelector('.alert') && view.querySelector('.alert').textContent.includes('Penicillin'), 'allergies are shown as an alert');
+    ok(view.querySelector('a[href="tel:5550100142"]'), 'the first contact is shown with a phone link');
+    ok(view.querySelectorAll('.card').length === 7, 'the example fills seven cards', view.querySelectorAll('.card').length);
+    ok(view.querySelectorAll('dt').length === 6 && view.querySelector('dd').textContent.includes('diabetes'), 'medical and address details are listed', view.querySelectorAll('dt').length);
+    ok(renderView(blankBinder(), 'f', new Date()).querySelector('.empty'), 'an empty binder shows how to start');
+    const hostile = normalize({ about: { name: '<img src=x onerror=alert(1)>' } });
+    ok(!renderView(hostile, 'f', new Date()).querySelector('.ice img'), 'names are shown as text, not markup');
+    const ed = h('div', null, renderEditor(ex));
+    ok(ed.querySelector('#f-about-name').value === 'Alex Rivera', 'the editor is filled in');
+    ok(ed.querySelectorAll('[data-path^="contacts."][data-path$=".name"]').length === 2, 'the editor has a row per contact');
+    ok(new Set(Array.from(ed.querySelectorAll('[id]'), (e) => e.id)).size === ed.querySelectorAll('[id]').length, 'editor ids are unique');
+    const sp = structuredClone(ex); setPath(sp, 'contacts.1.phone', '911');
+    ok(sp.contacts[1].phone === '911', 'edits land in the right place');
+  } catch (e) { fails.push('exception during self-test: ' + (e && e.stack || e)); }
+  if (fails.length) { console.error('[emergency-binder] self-test: ' + fails.length + ' of ' + n + ' checks FAILED'); fails.forEach((f) => console.error('  ✗ ' + f)); }
+  else console.info('[emergency-binder] self-test: all ' + n + ' checks passed');
+  return { total: n, failures: fails };
+}
+
+// Test contract shared with tools/: set window.portaTestResult before load, then show the result on the page.
+function runTestsIfRequested() {
+  if (location.hash !== '#test') return;
+  const r = window.portaTestResult = selfTest();
+  let el = document.getElementById('test-report');
+  if (!el) { el = document.createElement('div'); el.id = 'test-report'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
+  el.className = r.failures.length ? 'fail' : 'pass';
+  el.textContent = r.failures.length
+    ? 'Self-test: ' + r.failures.length + ' of ' + r.total + ' checks FAILED\n' + r.failures.map((f) => '✗ ' + f).join('\n')
+    : 'Self-test: all ' + r.total + ' checks passed';
+}
+
+load();
+wire();
+renderAll();
+runTestsIfRequested();
+window.addEventListener('hashchange', runTestsIfRequested);
+</script>
+</body>
+</html>
