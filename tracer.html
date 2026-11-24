@@ -1,0 +1,830 @@
+<!DOCTYPE html>
+<!--
+  Baseline tracer
+
+  Runs a porta-pages app inside this page, records which web platform APIs
+  it actually calls, and looks each one up in web-features
+  (https://github.com/web-platform-dx/web-features). The results are sorted
+  by the README's browser-support rule: widely available; allowed (Baseline
+  newly available, or in current Chrome, Firefox, Safari and Safari on iOS);
+  or needs a fallback, meaning the app must feature-detect it and work
+  without it.
+
+  Pick or drop an app's .html file, enter its URL, or pick one of the apps
+  on this site. Then use the app in the frame the way you normally would:
+  the results fill in as code runs. Tick "Run its self-test" to load the
+  app with #test, which exercises much of it with no clicking. Copy or
+  download the results as a Markdown report.
+
+  How it works: before any of the app's own scripts run, a script is added
+  to the top of the app that wraps every method, getter, setter and
+  constructor that web-features names by a compat key (a BCD path such as
+  api.Navigator.share or javascript.builtins.Array.at). Each wrapper reports
+  its first use and then puts the original back, so the app runs at full
+  speed after that. Event types are recorded from addEventListener.
+
+  The app runs in a sandboxed frame with an origin of its own, so it can't
+  reach this page or its storage. Storage throws in such a frame, so
+  localStorage and sessionStorage are replaced by copies that live in memory
+  and are lost when the app reloads.
+
+  Limits:
+  - Only code that runs is seen, so what you find depends on what you do
+    in the app. Reading a property without calling it (feature detection
+    like "if (navigator.share)") isn't recorded, and neither are constants
+    or other plain data properties.
+  - CSS, HTML and JavaScript syntax (such as ??= or private fields) aren't
+    traced, since they don't go through a function. A static check for
+    those belongs in the workbench, which never runs the files it checks.
+  - Event handlers set with on... properties aren't seen, only
+    addEventListener.
+  - Browsers block autofocus in a frame from another origin, so an app
+    that focuses something on load won't, and the console says so.
+  - web-features files a member under the interface that defines it in the
+    specs. A browser that puts it somewhere else won't report it.
+  - The first visit needs a network connection: the dataset (about 5 MB)
+    is fetched from jsDelivr, with unpkg as a fallback, and the parts this
+    page needs are kept in localStorage. After that it works offline.
+
+  The Content-Security-Policy is the loosest of any app's, because the
+  frame inherits this page's policy on top of the app's own, so this page
+  has to allow what every app needs. That is why it allows 'unsafe-eval'
+  (the workbench needs it) and data: and blob: images, fonts and media.
+  Nothing in this page's own code uses eval. connect-src allows 'self' and
+  https: so it can fetch the dataset and the apps.
+
+  Open this file with #test at the end of the URL to run the built-in
+  self-test, which traces a made-up app with a made-up dataset and needs
+  no network, and show the results on the page.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'self' https:; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Baseline tracer</title>
+<meta name="description" content="Runs a porta-pages app and reports which web platform features it calls, and how widely available each one is.">
+<style>
+  :root {
+    --paper: #f5f6f4; --panel: #ffffff; --ink: #1c2733; --ink-2: #4a5561; --rule: #d5dad6;
+    --link: #2b5c8a; --pass-bg: #e3f2e9; --pass: #1f6b43; --warn-bg: #fbf0d9; --warn: #8a5a00;
+    --fail-bg: #f8e3e3; --fail: #9b2c2c; --code-bg: #eceee9;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) { :root {
+    --paper: #151a20; --panel: #1d242c; --ink: #e6eaee; --ink-2: #b8c0c8; --rule: #2e363f;
+    --link: #7fb0dc; --pass-bg: #1e3a2d; --pass: #6cc49a; --warn-bg: #3d3220; --warn: #e5b85c;
+    --fail-bg: #44262b; --fail: #e08a96; --code-bg: #262e37;
+  } }
+  *, *::before, *::after { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main {
+    max-width: 90rem; margin: 0 auto;
+    padding: max(2rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) 2rem max(1rem, env(safe-area-inset-left));
+  }
+  h1 { margin: 0 0 0.25rem; font-size: 1.75rem; }
+  h2 { margin: 0; font-size: 1.0625rem; }
+  .lede { max-width: 48rem; margin: 0 0 1.5rem; color: var(--ink-2); }
+  a { color: var(--link); }
+  code { padding: 0 0.25em; border-radius: 4px; background: var(--code-bg); font: 0.875em/1.4 ui-monospace, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+  button, .button {
+    display: inline-block; padding: 0.5rem 0.875rem; border: 1px solid var(--rule); border-radius: 8px;
+    background: var(--panel); color: var(--ink); font: inherit; text-decoration: none; cursor: pointer;
+  }
+  button:hover, .button:hover { border-color: var(--link); }
+  button:disabled { opacity: 0.5; cursor: default; border-color: var(--rule); }
+  button:focus-visible, .button:focus-visible, summary:focus-visible, input:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+  button.primary { border-color: var(--link); background: var(--link); color: var(--panel); font-weight: 600; }
+  .hint { color: var(--ink-2); font-size: 0.875rem; }
+  #pick { padding: 1rem 1.25rem; border: 2px dashed var(--rule); border-radius: 12px; background: var(--panel); }
+  #pick.over { border-color: var(--link); }
+  #pick p { margin: 0; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-top: 0.75rem; }
+  #url { flex: 1 1 18rem; min-width: 0; padding: 0.5rem 0.625rem; border: 1px solid var(--rule); border-radius: 8px; background: var(--paper); color: var(--ink); font: 0.875rem/1.4 ui-monospace, Menlo, Consolas, monospace; }
+  #site-apps { display: flex; flex-wrap: wrap; gap: 0.375rem; }
+  #site-apps button { padding: 0.25rem 0.625rem; font-size: 0.875rem; }
+  #data-status { margin: 0.75rem 0 0; }
+  #data-status.err { color: var(--fail); }
+  #workspace { display: grid; gap: 1rem; margin-top: 1.5rem; }
+  @media (min-width: 64rem) { #workspace { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); align-items: start; } }
+  .pane { border: 1px solid var(--rule); border-radius: 8px; background: var(--panel); }
+  .pane-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; padding: 0.625rem 0.875rem; border-bottom: 1px solid var(--rule); }
+  .pane-head h2 { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+  .pane-head button, .pane-head .button { padding: 0.25rem 0.625rem; font-size: 0.875rem; }
+  #frame { display: block; width: 100%; height: min(75vh, 48rem); border: 0; border-radius: 0 0 8px 8px; background: #fff; }
+  #results-body { padding: 0.25rem 0.875rem 0.875rem; }
+  #summary { margin: 0.625rem 0; font-weight: 600; }
+  #errors { margin: 0 0 0.75rem; padding: 0.5rem 0.75rem; border-radius: 8px; background: var(--fail-bg); color: var(--fail); font-size: 0.875rem; }
+  #errors ul { margin: 0.25rem 0 0; padding-left: 1.125rem; }
+  .group { margin-top: 0.75rem; border-top: 1px solid var(--rule); padding-top: 0.5rem; }
+  .group > summary { display: flex; align-items: baseline; gap: 0.5rem; cursor: pointer; list-style: none; font-weight: 600; }
+  .group > summary::-webkit-details-marker { display: none; }
+  .group > summary::before { content: "\25B8"; width: 0.75rem; color: var(--ink-2); }
+  .group[open] > summary::before { content: "\25BE"; }
+  .group .why { margin: 0.25rem 0 0; color: var(--ink-2); font-size: 0.875rem; font-weight: normal; }
+  .badge { padding: 0 0.5rem; border-radius: 999px; font-size: 0.8125rem; font-weight: 600; }
+  .enhance .badge { background: var(--fail-bg); color: var(--fail); }
+  .allowed .badge { background: var(--warn-bg); color: var(--warn); }
+  .widely .badge { background: var(--pass-bg); color: var(--pass); }
+  .features { list-style: none; margin: 0.5rem 0 0; padding: 0; display: grid; gap: 0.5rem; }
+  .features > li { padding: 0.5rem 0.625rem; border: 1px solid var(--rule); border-radius: 6px; }
+  .features .name { font-weight: 600; }
+  .support { display: block; color: var(--ink-2); font-size: 0.8125rem; }
+  .support .no { color: var(--fail); font-weight: 600; }
+  .keys { margin: 0.25rem 0 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 0.25rem; font-size: 0.875rem; }
+  .keys .detail { flex-basis: 100%; }
+  .empty { margin: 0.5rem 0 0; color: var(--ink-2); font-size: 0.875rem; }
+  #placeholder { padding: 2rem 1rem; color: var(--ink-2); text-align: center; }
+  footer { margin-top: 2rem; font-size: 0.875rem; color: var(--ink-2); }
+  #test-report { position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 10; max-height: 40vh; overflow: auto; padding: 10px 14px; border: 1px solid; border-radius: 8px; font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; }
+  #test-report.pass { background: var(--pass-bg); color: var(--pass); }
+  #test-report.fail { background: var(--fail-bg); color: var(--fail); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Baseline tracer</h1>
+  <p class="lede">Runs an app and records which web platform APIs it calls, then says how widely available each one is. The app runs in a sandboxed frame, so it can't reach this page. Unlike the workbench, this does run the app's code, so only trace files you trust.</p>
+  <section id="pick" aria-label="App to trace">
+    <p>Pick or drop an app's <code>.html</code> file, or load it from a URL.</p>
+    <div class="row">
+      <button type="button" class="primary" id="pick-file">Choose file</button>
+      <label><input type="checkbox" id="selftest"> Run its self-test (<code>#test</code>)</label>
+    </div>
+    <input type="file" id="file-input" accept=".html,text/html" hidden>
+    <form id="url-form" class="row">
+      <label for="url" class="hint">URL</label>
+      <input id="url" type="url" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="https://raw.githubusercontent.com/you/repo/main/app.html">
+      <button type="submit">Load</button>
+    </form>
+    <div class="row" id="site" hidden>
+      <span class="hint">Apps on this site:</span>
+      <div id="site-apps"></div>
+    </div>
+    <p id="data-status" class="hint" role="status">Loading the web-features dataset…</p>
+  </section>
+  <div id="workspace">
+    <section class="pane" aria-labelledby="app-name">
+      <div class="pane-head">
+        <h2 id="app-name">No app loaded</h2>
+        <button type="button" id="reload" disabled>Reload app</button>
+      </div>
+      <div id="placeholder">Pick an app to start tracing.</div>
+      <iframe id="frame" title="The app being traced" sandbox="allow-scripts allow-forms allow-modals allow-downloads allow-popups allow-popups-to-escape-sandbox" hidden></iframe>
+    </section>
+    <section class="pane" aria-labelledby="results-title">
+      <div class="pane-head">
+        <h2 id="results-title">Features used</h2>
+        <button type="button" id="copy" disabled>Copy report</button>
+        <a class="button" id="download" href="#" download="tracer-report.md" aria-disabled="true">Download</a>
+        <button type="button" id="clear" disabled>Clear</button>
+      </div>
+      <div id="results-body">
+        <p id="summary" aria-live="polite">Nothing traced yet.</p>
+        <div id="errors" hidden><strong>The app reported errors:</strong><ul></ul></div>
+        <div id="groups"></div>
+      </div>
+    </section>
+  </div>
+  <footer>Results come from this browser. A member that another browser puts somewhere else, or that this browser lacks, is only seen in a browser that has it. Feature data from <a href="https://github.com/web-platform-dx/web-features">web-features</a>.</footer>
+</main>
+<script>
+(function () {
+  'use strict';
+  const $ = (s) => document.querySelector(s);
+
+  /* ===================== the dataset ===================== */
+
+  // The parts of web-features this page uses: for each api.* and javascript.builtins.* compat key, its
+  // feature and its own Baseline status and browser support. Deeper keys name parameters and options,
+  // which can't be seen from a call, so they're dropped.
+  const BROWSERS = [['chrome', 'Chrome'], ['firefox', 'Firefox'], ['safari', 'Safari'], ['safari_ios', 'Safari on iOS']];
+  function keepKey(key) {
+    const s = key.split('.');
+    if (s[0] === 'api') return s.length <= 3;
+    return s[0] === 'javascript' && s[1] === 'builtins' && s.length >= 3 && s.length <= 5;
+  }
+  function tierOf(st) { return st && st.baseline === 'high' ? 'h' : st && st.baseline === 'low' ? 'l' : 'n'; }
+  function reduce(data, version) {
+    const f = [], k = {};
+    for (const [id, feat] of Object.entries(data.features || {})) {
+      if (!feat || feat.kind !== 'feature' || !Array.isArray(feat.compat_features)) continue;
+      const st = feat.status || {}, byKey = st.by_compat_key || {};
+      let fi = -1;
+      for (const key of feat.compat_features) {
+        if (!keepKey(key) || k[key]) continue;
+        if (fi < 0) { fi = f.length; f.push([id, String(feat.name || id)]); }
+        const ks = byKey[key] || st, sup = ks.support || {};
+        k[key] = [fi, tierOf(ks)].concat(BROWSERS.map(([b]) => String(sup[b] || '')));
+      }
+    }
+    return { meta: { version: String(version), generated: new Date().toISOString().slice(0, 10) }, f, k };
+  }
+
+  // The README's rule: widely available is fine; so is anything in current Chrome, Firefox and Safari
+  // (including iOS), which Baseline newly available implies; anything else needs a fallback.
+  function verdict(entry) {
+    if (entry[1] === 'h') return 'widely';
+    if (entry[1] === 'l' || entry.slice(2, 6).every(Boolean)) return 'allowed';
+    return 'enhance';
+  }
+  const GROUPS = [
+    ['enhance', 'Needs a fallback', 'Not in all of current Chrome, Firefox and Safari (including iOS). The app has to feature-detect these and still work without them.'],
+    ['allowed', 'Allowed, not yet widely available', 'In current Chrome, Firefox and Safari (including iOS), so the README allows them, but older browsers may lack them.'],
+    ['widely', 'Widely available', 'Baseline widely available.'],
+  ];
+  const RANK = { enhance: 0, allowed: 1, widely: 2 };
+
+  /* ===================== what to wrap ===================== */
+
+  // Turns compat keys into what the injected script wraps: [key, path from window, member name]. The script
+  // looks for the member on path's prototype, then on path itself (statics and namespaces like CSS), or on
+  // window and Window.prototype when the path is empty. "parents" maps a member's key to its interface's
+  // key, which counts as used when any member is. "events" maps interface → event type → key.
+  function buildPlan(k) {
+    const items = [], parents = {}, events = {};
+    const parent = (key, up) => { if (k[up]) parents[key] = up; };
+    for (const key of Object.keys(k)) {
+      const s = key.split('.');
+      if (s[0] === 'api') {
+        if (s.length === 2) { if (/^[a-z]/.test(s[1])) items.push([key, [], s[1]]); continue; }
+        const X = s[1], Y = s[2];
+        parent(key, 'api.' + X);
+        if (Y.endsWith('_event')) { (events[X] = events[X] || {})[Y.slice(0, -6)] = key; continue; }
+        const name = Y.replace(/_static$/, '');
+        if (name === X || X === 'Window') items.push([key, [], name]);
+        else items.push([key, [X], name]);
+      } else {
+        const p = s.slice(2), name = p[p.length - 1], path = p.slice(0, -1);
+        if (name === '@@species') continue; // read by the engine inside map(), then() and so on, not by the app
+        if (!path.length) { if (/^[a-z]/.test(name)) items.push([key, [], name]); continue; }
+        parent(key, 'javascript.builtins.' + path.join('.'));
+        if (name === path[path.length - 1]) items.push([key, path.slice(0, -1), name]); // a constructor
+        else items.push([key, path, name]);
+      }
+    }
+    return { items, parents, events };
+  }
+
+  // Globals that are compared by identity (x.constructor === Array) or used everywhere, so swapping them for
+  // a wrapper, even briefly, could change what an app does. They're all as old as the web platform gets.
+  const CORE = ['Object', 'Function', 'Array', 'Promise', 'String', 'Number', 'Boolean', 'Symbol', 'RegExp', 'Error', 'Proxy', 'Reflect'];
+  const AEL_KEY = 'api.EventTarget.addEventListener';
+
+  /* ===================== the injected script ===================== */
+
+  // This function is never called here: its source is written into the app, ahead of the app's own scripts,
+  // and runs there. It may only use what it captures before it starts wrapping, because anything else could
+  // be one of its own wrappers by then. So: no string or array methods, no spread or for...of, and the
+  // functions it needs are kept from the start. "quiet" stops it recording what it does itself.
+  function tracerShim(cfg) {
+    'use strict';
+    const W = window, P = W.parent, R = Reflect, apply = R.apply, construct = R.construct, PX = Proxy;
+    const gopd = Object.getOwnPropertyDescriptor, dp = Object.defineProperty, gpo = Object.getPrototypeOf;
+    const create = Object.create, keysOf = Object.keys, Str = String, later = W.setTimeout;
+    const hasOwn = Object.prototype.hasOwnProperty, OP = Object.prototype, FP = Function.prototype;
+    const ael = W.EventTarget && W.EventTarget.prototype.addEventListener;
+    const SYM = create(null);
+    SYM['@@iterator'] = Symbol.iterator; SYM['@@asyncIterator'] = Symbol.asyncIterator; SYM['@@toPrimitive'] = Symbol.toPrimitive;
+    SYM['@@toStringTag'] = Symbol.toStringTag; SYM['@@hasInstance'] = Symbol.hasInstance; SYM['@@unscopables'] = Symbol.unscopables;
+    SYM['@@match'] = Symbol.match; SYM['@@matchAll'] = Symbol.matchAll; SYM['@@replace'] = Symbol.replace;
+    SYM['@@search'] = Symbol.search; SYM['@@split'] = Symbol.split; SYM['@@isConcatSpreadable'] = Symbol.isConcatSpreadable;
+    const CORE = create(null);
+    for (let i = 0; i < cfg.core.length; i++) CORE[cfg.core[i]] = 1;
+    const seen = create(null);
+    let queue = [], pending = false, quiet = 1, wrapped = 0;
+
+    function send(msg) {
+      msg.porta = cfg.token;
+      try { apply(P.postMessage, P, [msg, '*']); } catch (e) { /* the tracer is gone */ }
+    }
+    function flush() { pending = false; const keys = queue; queue = []; send({ type: 'keys', keys: keys }); }
+    function record(key) {
+      if (seen[key]) return;
+      seen[key] = 1; queue[queue.length] = key;
+      const up = apply(hasOwn, cfg.parents, [key]) ? cfg.parents[key] : '';
+      if (up && !seen[up]) { seen[up] = 1; queue[queue.length] = up; }
+      if (!pending) { pending = true; apply(later, W, [flush, 30]); }
+    }
+    function wrapFn(fn, hit, pre) {
+      const p = new PX(fn, {
+        apply: function (t, self, args) { if (pre) pre(self, args); hit(); return apply(t, self, args); },
+        construct: function (t, args, nt) { hit(); return construct(t, args, nt === p ? t : nt); },
+      });
+      return p;
+    }
+    // Swaps holder[name] for a wrapper that records key, then (unless keep) puts the original back on its
+    // first use, if the app hasn't replaced it by then.
+    function wrap(holder, name, key, keep, pre) {
+      const d = gopd(holder, name);
+      if (!d || !d.configurable) return;
+      let done = false, nd, wv, wg, ws;
+      function hit() {
+        if (quiet) return;
+        record(key);
+        if (done || keep) return;
+        done = true;
+        const cur = gopd(holder, name);
+        if (cur && (wv ? cur.value === wv : cur.get === wg && cur.set === ws)) dp(holder, name, d);
+      }
+      if (typeof d.value === 'function') {
+        wv = wrapFn(d.value, hit, pre);
+        nd = { value: wv, writable: d.writable, enumerable: d.enumerable, configurable: true };
+      } else if (d.get || d.set) {
+        if (d.get) wg = wrapFn(d.get, hit);
+        if (d.set) ws = wrapFn(d.set, hit);
+        nd = { get: wg, set: ws, enumerable: d.enumerable, configurable: true };
+      } else return;
+      try { dp(holder, name, nd); wrapped++; } catch (e) { /* not ours to change */ }
+    }
+
+    // Event types: on addEventListener, find the first interface up the target's prototype chain that
+    // web-features lists the event type for.
+    function onListen(target, args) {
+      if (quiet || target == null || typeof args[0] !== 'string') return;
+      quiet++;
+      try {
+        let o = target;
+        for (let i = 0; i < 16; i++) {
+          o = gpo(o);
+          if (!o) break;
+          const c = gopd(o, 'constructor'), n = c && typeof c.value === 'function' ? gopd(c.value, 'name') : null;
+          const types = n && typeof n.value === 'string' && apply(hasOwn, cfg.events, [n.value]) ? cfg.events[n.value] : null;
+          if (types && apply(hasOwn, types, [args[0]])) { quiet--; record(types[args[0]]); quiet++; break; }
+        }
+      } catch (e) { /* an odd target */ }
+      quiet--;
+    }
+
+    // Storage throws in a sandboxed frame, so the app gets one that lives in memory instead.
+    function memoryStorage(kind) {
+      const data = create(null), s = {};
+      const use = (m) => { if (!quiet) record('api.Storage.' + m); };
+      s.getItem = function (k) { use('getItem'); k = Str(k); return k in data ? data[k] : null; };
+      s.setItem = function (k, v) { use('setItem'); data[Str(k)] = Str(v); };
+      s.removeItem = function (k) { use('removeItem'); delete data[Str(k)]; };
+      s.clear = function () { use('clear'); for (const k in data) delete data[k]; };
+      s.key = function (i) { use('key'); const ks = keysOf(data); return i >= 0 && i < ks.length ? ks[i] : null; };
+      dp(s, 'length', { get: function () { use('length'); return keysOf(data).length; } });
+      dp(s, Symbol.toStringTag, { value: kind });
+      return s;
+    }
+    const st = ['localStorage', 'sessionStorage'];
+    for (let i = 0; i < 2; i++) {
+      let works = true;
+      try { W[st[i]].length; } catch (e) { works = false; }
+      if (!works) { const s = memoryStorage(st[i]); dp(W, st[i], { get: function () { return s; }, enumerable: true, configurable: true }); }
+    }
+
+    // A relative "#test" would resolve against this page's URL, which a sandboxed srcdoc frame may not take.
+    if (cfg.hash) { try { W.history.replaceState(null, '', W.location.href + cfg.hash); } catch (e) { /* the app sees no #test */ } }
+
+    const errs = function (e) {
+      quiet++;
+      try { send({ type: 'error', message: Str(e.message || 'Script error') + (e.lineno ? ' (line ' + e.lineno + ')' : '') }); } catch (x) { /* ignore */ }
+      quiet--;
+    };
+    const rejects = function (e) {
+      quiet++;
+      try { const r = e.reason; send({ type: 'error', message: 'Unhandled rejection: ' + Str(r && r.message ? r.message : r) }); } catch (x) { /* ignore */ }
+      quiet--;
+    };
+    if (ael) { apply(ael, W, ['error', errs]); apply(ael, W, ['unhandledrejection', rejects]); }
+
+    if (ael) wrap(W.EventTarget.prototype, 'addEventListener', cfg.ael, true, onListen);
+    const items = cfg.items;
+    for (let i = 0; i < items.length; i++) {
+      const key = items[i][0], path = items[i][1], raw = items[i][2];
+      if (key === cfg.ael) continue;
+      const name = SYM[raw] || raw;
+      let base = W;
+      try { for (let j = 0; j < path.length && base != null; j++) base = base[path[j]]; } catch (e) { base = null; }
+      if (base == null || (typeof base !== 'object' && typeof base !== 'function')) continue;
+      let holders;
+      try { holders = base === W ? [W, W.Window && W.Window.prototype] : [base.prototype, base]; } catch (e) { continue; }
+      for (let h = 0; h < 2; h++) {
+        const o = holders[h];
+        if (o == null || (typeof o !== 'object' && typeof o !== 'function')) continue;
+        if (o === OP || o === FP || (o === W && CORE[raw])) break;
+        if (!gopd(o, name)) continue;
+        wrap(o, name, key, false);
+        break;
+      }
+    }
+    quiet = 0;
+    send({ type: 'ready', wrapped: wrapped });
+  }
+
+  // The app's source with the tracer's script added right after its doctype, so it runs before anything
+  // else in the app, including its Content-Security-Policy (the frame still inherits this page's policy).
+  function inject(src, cfg) {
+    // JSON can't hold U+2028 as-is in old engines, and "<" is escaped so the data can't end the script.
+    const data = JSON.stringify(cfg).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
+    const script = '<script>(' + tracerShim.toString() + ')(' + data + ');<\/script>\n';
+    const m = /^\uFEFF?\s*<!doctype[^>]*>[ \t]*\n?/i.exec(src);
+    return m ? src.slice(0, m[0].length) + script + src.slice(m[0].length) : script + src;
+  }
+
+  /* ===================== tracing ===================== */
+
+  const frame = $('#frame');
+  let payload = null, plan = null, source = null, token = '';
+  const hits = new Map(); // key → order of first use
+  const errors = [];
+
+  function trace(src, name) {
+    source = { src, name };
+    if (!payload) return;
+    token = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    const cfg = { token, items: plan.items, parents: plan.parents, events: plan.events, core: CORE, ael: AEL_KEY, hash: $('#selftest').checked ? '#test' : '' };
+    $('#app-name').textContent = name;
+    $('#placeholder').hidden = true;
+    frame.hidden = false;
+    $('#reload').disabled = false;
+    frame.srcdoc = inject(src, cfg);
+    render();
+  }
+
+  window.addEventListener('message', (e) => {
+    if (e.source !== frame.contentWindow) return;
+    const d = e.data;
+    if (!d || typeof d !== 'object' || d.porta !== token || !payload) return;
+    if (d.type === 'keys' && Array.isArray(d.keys)) {
+      for (const key of d.keys) if (typeof key === 'string' && payload.k[key] && !hits.has(key)) hits.set(key, hits.size);
+      scheduleRender();
+    } else if (d.type === 'error' && typeof d.message === 'string' && errors.length < 50) {
+      errors.push(d.message.slice(0, 500));
+      scheduleRender();
+    }
+  });
+
+  /* ===================== results ===================== */
+
+  // Hits grouped by feature, each in the group of its least available key.
+  function summarize(data, keys) {
+    const byFeature = new Map();
+    for (const key of keys) {
+      const e = data.k[key];
+      if (!e) continue;
+      let f = byFeature.get(e[0]);
+      if (!f) { const [id, name] = data.f[e[0]]; f = { id, name, keys: [], v: 'widely' }; byFeature.set(e[0], f); }
+      const v = verdict(e);
+      f.keys.push({ key, v, sup: e.slice(2, 6) });
+      if (RANK[v] < RANK[f.v]) f.v = v;
+    }
+    const groups = {};
+    for (const [v] of GROUPS) groups[v] = [];
+    for (const f of byFeature.values()) {
+      f.keys.sort((a, b) => RANK[a.v] - RANK[b.v] || a.key.localeCompare(b.key));
+      groups[f.v].push(f);
+    }
+    for (const v in groups) groups[v].sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }));
+    return groups;
+  }
+  const featureUrl = (id) => 'https://web-platform-dx.github.io/web-features-explorer/features/' + encodeURIComponent(id) + '/';
+  const supportText = (sup) => BROWSERS.map(([, label], i) => label + ' ' + (sup[i] || 'no')).join(', ');
+  const plural = (n, word) => n + ' ' + word + (n === 1 ? '' : 's');
+
+  function report(name, data, groups, errs) {
+    const lines = ['# Baseline tracer: ' + name, '',
+      'web-features v' + data.meta.version + '. Only code that ran while tracing is covered.', ''];
+    for (const [v, title, why] of GROUPS) {
+      lines.push('## ' + title + ' (' + groups[v].length + ')', '', why, '');
+      if (!groups[v].length) lines.push('None.', '');
+      else {
+        for (const f of groups[v]) {
+          lines.push('- [' + f.name.replace(/[[\]]/g, '\\$&') + '](' + featureUrl(f.id) + '): ' +
+            f.keys.map((k) => '`' + k.key + '`' + (k.v === 'widely' ? '' : ' (' + supportText(k.sup) + ')')).join(', '));
+        }
+        lines.push('');
+      }
+    }
+    if (errs.length) { lines.push('## Errors in the app', ''); for (const m of errs) lines.push('- ' + m.replace(/\s+/g, ' ')); lines.push(''); }
+    return lines.join('\n');
+  }
+
+  let renderQueued = false;
+  function scheduleRender() { if (!renderQueued) { renderQueued = true; requestAnimationFrame(() => { renderQueued = false; render(); }); } }
+  function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
+
+  const openGroups = { enhance: true, allowed: true, widely: false };
+  function render() {
+    const have = !!(payload && source);
+    $('#copy').disabled = !have; $('#clear').disabled = !hits.size && !errors.length;
+    $('#download').setAttribute('aria-disabled', String(!have));
+    const box = $('#groups');
+    box.textContent = '';
+    if (!payload) { $('#summary').textContent = 'Waiting for the web-features dataset.'; return; }
+    if (!source) { $('#summary').textContent = 'Nothing traced yet.'; return; }
+    const groups = summarize(payload, hits.keys());
+    const n = GROUPS.reduce((s, [v]) => s + groups[v].length, 0);
+    $('#summary').textContent = n ? plural(n, 'feature') + ' used: ' + groups.enhance.length + ' need a fallback, ' + groups.allowed.length + ' allowed, ' + groups.widely.length + ' widely available.'
+      : 'No features recorded yet. Use the app, or reload it with its self-test.';
+    const ebox = $('#errors'), ul = ebox.querySelector('ul');
+    ebox.hidden = !errors.length; ul.textContent = '';
+    for (const m of errors) ul.append(el('li', '', m));
+    for (const [v, title, why] of GROUPS) {
+      const d = el('details', 'group ' + v);
+      d.open = openGroups[v];
+      d.addEventListener('toggle', () => { openGroups[v] = d.open; });
+      const s = el('summary');
+      s.append(el('span', '', title), el('span', 'badge', String(groups[v].length)));
+      d.append(s, el('p', 'why', why));
+      if (!groups[v].length) d.append(el('p', 'empty', 'None so far.'));
+      else {
+        const list = el('ul', 'features');
+        for (const f of groups[v]) {
+          const li = el('li'), a = el('a', 'name', f.name);
+          a.href = featureUrl(f.id); a.target = '_blank'; a.rel = 'noopener';
+          li.append(a);
+          // Each key that isn't widely available gets a line of its own with its support.
+          const keys = el('ul', 'keys');
+          for (const k of f.keys) {
+            const kl = el('li', k.v === 'widely' ? '' : 'detail');
+            kl.append(el('code', '', k.key));
+            if (k.v !== 'widely') {
+              const sup = el('span', 'support');
+              k.sup.forEach((ver, i) => {
+                if (i) sup.append(', ');
+                sup.append(BROWSERS[i][1] + ' ');
+                sup.append(ver ? el('span', '', ver) : el('span', 'no', 'no'));
+              });
+              kl.append(sup);
+            }
+            keys.append(kl);
+          }
+          li.append(keys);
+          list.append(li);
+        }
+        d.append(list);
+      }
+      box.append(d);
+    }
+  }
+
+  $('#reload').addEventListener('click', () => { if (source) trace(source.src, source.name); });
+  $('#clear').addEventListener('click', () => { hits.clear(); errors.length = 0; render(); });
+  $('#selftest').addEventListener('change', () => { if (source) trace(source.src, source.name); });
+  const currentReport = () => report(source.name, payload, summarize(payload, hits.keys()), errors);
+  $('#copy').addEventListener('click', async () => {
+    const b = $('#copy');
+    try { await navigator.clipboard.writeText(currentReport()); b.textContent = 'Copied'; }
+    catch (e) { b.textContent = 'Copy failed'; }
+    setTimeout(() => { b.textContent = 'Copy report'; }, 1500);
+  });
+  let downloadUrl = '';
+  $('#download').addEventListener('click', (e) => {
+    const a = e.currentTarget;
+    if (!payload || !source) { e.preventDefault(); return; }
+    if (downloadUrl) URL.revokeObjectURL(downloadUrl);
+    downloadUrl = URL.createObjectURL(new Blob([currentReport()], { type: 'text/markdown' }));
+    a.href = downloadUrl;
+    a.download = source.name.replace(/\.html?$/i, '') + '-tracer.md';
+  });
+
+  /* ===================== picking an app ===================== */
+
+  // A new app starts with fresh results. Reloading the same one keeps them, so several runs add up.
+  function load(src, name) {
+    if (!source || source.name !== name) { hits.clear(); errors.length = 0; }
+    trace(src, name);
+  }
+  function loadFile(file) {
+    if (!file) return;
+    file.text().then((t) => load(t, file.name), (e) => setStatus('Could not read ' + file.name + ': ' + e.message, true));
+  }
+  const fileInput = $('#file-input');
+  $('#pick-file').addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => { loadFile(fileInput.files[0]); fileInput.value = ''; });
+  const pick = $('#pick');
+  pick.addEventListener('dragover', (e) => { e.preventDefault(); pick.classList.add('over'); });
+  pick.addEventListener('dragleave', () => pick.classList.remove('over'));
+  pick.addEventListener('drop', (e) => { e.preventDefault(); pick.classList.remove('over'); loadFile(e.dataTransfer.files[0]); });
+
+  async function loadUrl(url) {
+    let u;
+    try { u = new URL(url, location.href); } catch (e) { setStatus('That is not a URL.', true); return; }
+    try {
+      const r = await fetch(u, { cache: 'no-cache' });
+      if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+      const name = decodeURIComponent(u.pathname.split('/').pop() || 'index.html');
+      load(await r.text(), name);
+    } catch (e) { setStatus('Could not load ' + u.href + ': ' + e.message + '. Another site has to allow it (CORS).', true); }
+  }
+  $('#url-form').addEventListener('submit', (e) => { e.preventDefault(); const v = $('#url').value.trim(); if (v) loadUrl(v); });
+
+  // Served from a site: offer the apps its index.html lists.
+  async function listSiteApps() {
+    if (!/^https?:$/.test(location.protocol)) return;
+    try {
+      const r = await fetch('index.html', { cache: 'no-cache' });
+      if (!r.ok) return;
+      const doc = new DOMParser().parseFromString(await r.text(), 'text/html');
+      const names = new Set(['index.html']);
+      for (const a of doc.querySelectorAll('a[href]')) {
+        const h = a.getAttribute('href');
+        if (/^[a-z0-9-]+\.html$/i.test(h) && h !== 'tracer.html') names.add(h);
+      }
+      const box = $('#site-apps');
+      for (const n of [...names].sort()) {
+        const b = el('button', '', n.replace(/\.html$/, ''));
+        b.type = 'button';
+        b.addEventListener('click', () => loadUrl(n));
+        box.append(b);
+      }
+      $('#site').hidden = false;
+    } catch (e) { /* not a porta-pages site */ }
+  }
+
+  /* ===================== loading the dataset ===================== */
+
+  const CACHE_KEY = 'porta-tracer:web-features:v1'; // namespaced: Chromium shares one localStorage across all file:// pages
+  const MIRRORS = ['https://cdn.jsdelivr.net/npm/web-features@3/', 'https://unpkg.com/web-features@3/'];
+  function readCache() { try { const c = JSON.parse(localStorage.getItem(CACHE_KEY)); return c && c.meta && c.f && c.k ? c : null; } catch (e) { return null; } }
+  function writeCache(p) { try { localStorage.setItem(CACHE_KEY, JSON.stringify(p)); return true; } catch (e) { return false; } }
+  async function fetchDataset(get = fetch) {
+    let lastErr;
+    for (const base of MIRRORS) {
+      try {
+        const [pkg, data] = await Promise.all([
+          get(base + 'package.json', { cache: 'no-cache' }).then((r) => { if (!r.ok) throw new Error(r.status + ' ' + r.statusText); return r.json(); }),
+          get(base + 'data.json').then((r) => { if (!r.ok) throw new Error(r.status + ' ' + r.statusText); return r.json(); }),
+        ]);
+        if (!data || !data.features) throw new Error('Unexpected data from ' + base);
+        return reduce(data, pkg.version);
+      } catch (e) { lastErr = e; }
+    }
+    throw lastErr;
+  }
+  function setStatus(text, err) { const s = $('#data-status'); s.textContent = text; s.classList.toggle('err', !!err); }
+  function describe(p) { return 'web-features v' + p.meta.version + ', ' + plural(Object.keys(p.k).length, 'API') + ' in ' + plural(p.f.length, 'feature') + ', fetched ' + p.meta.generated; }
+  function use(p) {
+    payload = p; plan = buildPlan(p.k);
+    if (source) trace(source.src, source.name); else render();
+  }
+  async function loadDataset() {
+    const cached = readCache();
+    if (cached) { use(cached); setStatus(describe(cached) + '. Checking for newer data…'); }
+    try {
+      const p = await fetchDataset();
+      const stored = writeCache(p);
+      if (!cached || cached.meta.version !== p.meta.version) use(p);
+      setStatus(describe(p) + (stored ? '.' : ' (no local copy could be kept, so the next visit needs the network too).'));
+    } catch (e) {
+      if (cached) setStatus(describe(cached) + '. Local copy: could not reach the CDN (' + e.message + ').');
+      else setStatus('Could not load the web-features dataset (' + e.message + '). The first visit needs a network connection.', true);
+    }
+  }
+
+  /* ===================== self-test (runs only with #test) ===================== */
+
+  // Checks the dataset reduction, the support rule, the wrap plan, the injection and the report on made-up
+  // data, then traces a made-up app in the real frame. It needs no network and leaves the cache alone.
+  const TEST_DATA = {
+    features: {
+      aborting: { kind: 'feature', name: 'AbortController and AbortSignal', compat_features: ['api.AbortController', 'api.AbortController.AbortController', 'api.AbortController.abort', 'api.AbortController.abort.reason_parameter'],
+        status: { baseline: 'high', support: { chrome: '66', firefox: '57', safari: '12.1', safari_ios: '12.2' } } },
+      share: { kind: 'feature', name: 'navigator.share()', compat_features: ['api.Navigator.share', 'html.elements.iframe.allow.web-share'],
+        status: { baseline: false, support: { chrome: '128', safari: '12.1', safari_ios: '12.2' } } },
+      'url-canparse': { kind: 'feature', name: 'URL.canParse()', compat_features: ['api.URL.canParse_static'], status: { baseline: 'low', support: { chrome: '120', firefox: '115', safari: '17', safari_ios: '17' } } },
+      'structured-clone': { kind: 'feature', name: 'structuredClone()', compat_features: ['api.structuredClone'], status: { baseline: 'high', support: {} } },
+      'array-at': { kind: 'feature', name: 'at()', compat_features: ['javascript.builtins.Array.at', 'javascript.builtins.Array.@@species'], status: { baseline: 'high', support: {} } },
+      segmenter: { kind: 'feature', name: 'Intl.Segmenter', compat_features: ['javascript.builtins.Intl.Segmenter', 'javascript.builtins.Intl.Segmenter.Segmenter', 'javascript.builtins.Intl.Segmenter.segment'], status: { baseline: 'low', support: {} } },
+      storage: { kind: 'feature', name: 'Web storage', compat_features: ['api.Window.localStorage', 'api.Storage.getItem', 'api.Storage.setItem'], status: { baseline: 'high', support: {} } },
+      events: { kind: 'feature', name: 'Events', compat_features: ['api.EventTarget.addEventListener', 'api.Element.click_event', 'api.Element.keydown_event', 'api.Document.getElementById', 'css.properties.color'],
+        status: { baseline: 'high', support: {}, by_compat_key: { 'api.Element.keydown_event': { baseline: false, support: { chrome: '1', firefox: '1', safari: '1', safari_ios: '1' } } } } },
+      oldname: { kind: 'moved', redirect_target: 'events' },
+    },
+  };
+  // Every API above, called or not, and a read of navigator.share that must not count as a use.
+  const TEST_APP = '\uFEFF<!DOCTYPE html>\n<html lang="en"><head><meta charset="utf-8">\n' +
+    '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\'">\n' +
+    '<title>t</title></head><body><button id="b">b</button><script>\n' +
+    'var c = new AbortController(); c.abort(); new AbortController().abort();\n' +
+    'structuredClone({ a: [1] }); [1, 2].at(-1); [3].at(0);\n' +
+    'localStorage.setItem("k", "v"); if (localStorage.getItem("k") !== "v") throw new Error("storage lost the value");\n' +
+    'document.getElementById("b").addEventListener("click", function () {});\n' +
+    'if (location.hash === "#probe") URL.canParse("https://example.com/");\n' +
+    'if (typeof navigator.share === "function" && navigator.share.length < 0) throw new Error("never");\n' +
+    '<\/script></body></html>\n';
+
+  async function selfTest() {
+    const fails = [];
+    let n = 0;
+    const ok = (cond, name, detail) => { n++; if (!cond) fails.push(name + (detail !== undefined ? ' — got ' + detail : '')); };
+    const eq = (a, b, name) => ok(JSON.stringify(a) === JSON.stringify(b), name, JSON.stringify(a));
+    try {
+      const p = reduce(TEST_DATA, '3.0.0');
+      const f = (key) => p.f[p.k[key][0]][0];
+      eq(p.meta.version, '3.0.0', 'reduce: keeps the version');
+      ok(!p.k['api.AbortController.abort.reason_parameter'], 'reduce: drops parameter keys');
+      ok(!p.k['css.properties.color'] && !p.k['html.elements.iframe.allow.web-share'], 'reduce: drops CSS and HTML keys');
+      ok(p.k['javascript.builtins.Intl.Segmenter.segment'] && f('javascript.builtins.Intl.Segmenter.segment') === 'segmenter', 'reduce: keeps namespaced builtins');
+      eq(p.k['api.Element.keydown_event'].slice(1), ['n', '1', '1', '1', '1'], 'reduce: a per-key status wins over the feature status');
+      eq(p.k['api.Element.click_event'][1], 'h', 'reduce: other keys take the feature status');
+      eq(p.k['api.Navigator.share'].slice(1), ['n', '128', '', '12.1', '12.2'], 'reduce: support by browser, blank when missing');
+      ok(!p.f.some(([id]) => id === 'oldname'), 'reduce: skips moved features');
+
+      eq(verdict(p.k['api.AbortController.abort']), 'widely', 'verdict: Baseline high is widely available');
+      eq(verdict(p.k['api.URL.canParse_static']), 'allowed', 'verdict: Baseline low is allowed');
+      eq(verdict(p.k['api.Element.keydown_event']), 'allowed', 'verdict: not Baseline but in all four browsers is allowed');
+      eq(verdict(p.k['api.Navigator.share']), 'enhance', 'verdict: missing from Firefox needs a fallback');
+
+      const pl = buildPlan(p.k);
+      const item = (key) => JSON.stringify(pl.items.find((i) => i[0] === key) || null);
+      eq(item('api.Navigator.share'), JSON.stringify(['api.Navigator.share', ['Navigator'], 'share']), 'plan: a member of an interface');
+      eq(item('api.URL.canParse_static'), JSON.stringify(['api.URL.canParse_static', ['URL'], 'canParse']), 'plan: a static member');
+      eq(item('api.AbortController.AbortController'), JSON.stringify(['api.AbortController.AbortController', [], 'AbortController']), 'plan: a constructor is a global');
+      eq(item('api.Window.localStorage'), JSON.stringify(['api.Window.localStorage', [], 'localStorage']), 'plan: a Window member is a global');
+      eq(item('api.structuredClone'), JSON.stringify(['api.structuredClone', [], 'structuredClone']), 'plan: a global function');
+      eq(item('javascript.builtins.Intl.Segmenter.Segmenter'), JSON.stringify(['javascript.builtins.Intl.Segmenter.Segmenter', ['Intl'], 'Segmenter']), 'plan: a namespaced constructor');
+      eq(item('javascript.builtins.Intl.Segmenter.segment'), JSON.stringify(['javascript.builtins.Intl.Segmenter.segment', ['Intl', 'Segmenter'], 'segment']), 'plan: a namespaced member');
+      eq(item('api.AbortController'), 'null', 'plan: an interface itself is not wrapped');
+      eq(item('javascript.builtins.Array.@@species'), 'null', 'plan: @@species is left alone');
+      eq(pl.events, { Element: { click: 'api.Element.click_event', keydown: 'api.Element.keydown_event' } }, 'plan: event types by interface');
+      eq(pl.parents['api.AbortController.abort'], 'api.AbortController', 'plan: a member points to its interface');
+      eq(pl.parents['javascript.builtins.Intl.Segmenter.segment'], 'javascript.builtins.Intl.Segmenter', 'plan: a builtin member points to its builtin');
+
+      const cfg = { token: 'x', note: '<\/script><!' + '-- \u2028' };
+      const inj = inject('<!DOCTYPE html>\n<html><head></head></html>\n', cfg);
+      ok(inj.startsWith('<!DOCTYPE html>\n<script>('), 'inject: the script goes right after the doctype', JSON.stringify(inj.slice(0, 30)));
+      ok((inj.match(/<\/script/gi) || []).length === 1 && inj.endsWith('<html><head></head></html>\n'), 'inject: the data cannot end the script early');
+      ok(inj.includes('\\u003c/script>') && inj.includes('\\u2028'), 'inject: < and line separators are escaped');
+      ok(inject('<p>hi</p>', cfg).startsWith('<script>('), 'inject: a file with no doctype gets the script first');
+
+      const groups = summarize(p, ['api.Navigator.share', 'api.AbortController.abort', 'api.AbortController', 'api.Element.keydown_event', 'api.Element.click_event', 'not.a.key']);
+      eq(groups.enhance.map((x) => x.id), ['share'], 'summarize: needs a fallback');
+      eq(groups.allowed.map((x) => x.id), ['events'], 'summarize: a feature takes the group of its least available key');
+      eq(groups.allowed[0].keys.map((k) => k.key), ['api.Element.keydown_event', 'api.Element.click_event'], 'summarize: least available key first');
+      eq(groups.widely.map((x) => x.id), ['aborting'], 'summarize: widely available, unknown keys ignored');
+      const md = report('a [b].html', p, groups, ['boom\nbang']);
+      ok(md.startsWith('# Baseline tracer: a [b].html\n'), 'report: title');
+      ok(md.includes('## Needs a fallback (1)') && md.includes('## Widely available (1)'), 'report: a section per group with counts');
+      ok(md.includes('- [navigator.share()](https://web-platform-dx.github.io/web-features-explorer/features/share/): `api.Navigator.share` (Chrome 128, Firefox no, Safari 12.1, Safari on iOS 12.2)'), 'report: a feature line, with support for each key that is not widely available');
+      ok(md.includes('): `api.Element.keydown_event` (Chrome 1, Firefox 1, Safari 1, Safari on iOS 1), `api.Element.click_event`\n'), 'report: widely available keys get no support list');
+      ok(md.includes('## Errors in the app\n\n- boom bang'), 'report: errors on one line each');
+
+      // The real thing: trace a made-up app in the frame and wait for what it calls.
+      const got = await new Promise((resolve) => {
+        const tok = 'selftest';
+        const seen = new Set(), errs = [];
+        let ready = null;
+        const want = ['api.AbortController.AbortController', 'api.AbortController.abort', 'api.AbortController', 'api.structuredClone', 'javascript.builtins.Array.at',
+          'api.Window.localStorage', 'api.Storage.setItem', 'api.Storage.getItem', 'api.EventTarget.addEventListener', 'api.Element.click_event', 'api.Document.getElementById', 'api.URL.canParse_static'];
+        const f2 = document.createElement('iframe');
+        f2.setAttribute('sandbox', frame.getAttribute('sandbox'));
+        f2.title = 'Self-test app'; f2.hidden = true;
+        const done = () => { window.removeEventListener('message', onMsg); f2.remove(); resolve({ seen, errs, ready, want }); };
+        const timer = setTimeout(done, 5000);
+        const onMsg = (e) => {
+          if (e.source !== f2.contentWindow || !e.data || e.data.porta !== tok) return;
+          if (e.data.type === 'ready') ready = e.data.wrapped;
+          if (e.data.type === 'error') errs.push(e.data.message);
+          if (e.data.type === 'keys') for (const k of e.data.keys) seen.add(k);
+          if (want.every((k) => seen.has(k))) { clearTimeout(timer); setTimeout(done, 150); }
+        };
+        window.addEventListener('message', onMsg);
+        const tp = buildPlan(p.k);
+        document.body.append(f2);
+        f2.srcdoc = inject(TEST_APP, { token: tok, items: tp.items, parents: tp.parents, events: tp.events, core: CORE, ael: AEL_KEY, hash: '#probe' });
+      });
+      ok(got.ready > 5, 'trace: the script wrapped the APIs', got.ready);
+      eq(got.errs, [], 'trace: the app ran without errors');
+      eq(got.want.filter((k) => !got.seen.has(k)), [], 'trace: every API the app called was recorded');
+      ok(!got.seen.has('api.Navigator.share'), 'trace: reading a method without calling it is not recorded');
+      ok(!got.seen.has('api.Element.keydown_event'), 'trace: an event type nobody listened for is not recorded');
+      ok(!got.seen.has('javascript.builtins.Intl.Segmenter.Segmenter'), 'trace: an API that was not called is not recorded');
+    } catch (e) { fails.push('exception during self-test: ' + (e && e.stack || e)); }
+    if (fails.length) { console.error('[tracer] self-test: ' + fails.length + ' of ' + n + ' checks FAILED'); fails.forEach((f) => console.error('  ✗ ' + f)); }
+    else console.info('[tracer] self-test: all ' + n + ' checks passed');
+    return { total: n, failures: fails };
+  }
+  // Test contract shared with tools/: set window.portaTestResult before load, then show the result on the page.
+  function runTestsIfRequested() {
+    if (location.hash !== '#test') return;
+    const r = window.portaTestResult = selfTest();
+    r.then((res) => {
+      let box = $('#test-report');
+      if (!box) { box = el('div'); box.id = 'test-report'; box.setAttribute('role', 'status'); document.body.append(box); }
+      box.className = res.failures.length ? 'fail' : 'pass';
+      box.textContent = res.failures.length
+        ? 'Self-test: ' + res.failures.length + ' of ' + res.total + ' checks FAILED\n' + res.failures.map((f) => '✗ ' + f).join('\n')
+        : 'Self-test: all ' + res.total + ' checks passed';
+    });
+  }
+
+  /* ===================== boot ===================== */
+
+  render();
+  listSiteApps();
+  runTestsIfRequested();
+  window.addEventListener('hashchange', runTestsIfRequested);
+  loadDataset();
+})();
+</script>
+</body>
+</html>
