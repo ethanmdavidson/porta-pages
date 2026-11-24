@@ -8,7 +8,7 @@
 
   Orbits follow Newton's gravity in a single plane, seen from above the
   North Pole with the Sun to the right. Altitudes are drawn stretched, so
-  orbits a few hundred kilometres apart can be told apart. A prograde burn
+  orbits a few hundred kilometers apart can be told apart. A prograde burn
   raises the far side of your orbit, and a higher orbit is a slower one, so
   to catch up with a satellite ahead of you, burn retrograde.
 
@@ -231,7 +231,7 @@
   .menu-col { display: grid; gap: 8px; margin-top: 12px; }
   .menu-col .btn { min-height: 44px; font-size: 15px; }
 
-  /* top, margin, width and height undo the popover defaults, which centre it */
+  /* top, margin, width and height undo the popover defaults, which center it */
   #test-report { position: fixed; top: auto; left: 12px; right: 12px; bottom: 12px; z-index: 10; margin: 0; width: auto; height: auto; max-height: 40vh; overflow: auto; padding: 10px 14px; border: 1px solid; background: var(--panel); font: 13px/1.4 var(--mono); white-space: pre-wrap; -webkit-user-select: text; user-select: text; }
   #test-report.pass { color: var(--ok); }
   #test-report.fail { color: var(--bad); }
@@ -261,6 +261,7 @@
     </div>
     <div id="toast" class="hud" role="status" aria-live="polite"></div>
     <div id="hud-bl" class="hud">
+      <div id="r-seen" hidden><span class="k">Seen by</span><span id="i-seen"></span></div>
       <div><span class="k">Target</span><b id="i-range">—</b> <span id="i-closing"></span></div>
       <div><span class="k">Closest</span><b id="i-ca">—</b></div>
       <div id="r-plan" hidden><span class="k">Planned</span><b id="i-plan">—</b></div>
@@ -306,7 +307,7 @@
     </div>
     <div id="legend">
       <p><i style="color: var(--you)">Cyan</i> is you, <i style="color: var(--tgt)">red</i> the target, and the dashed white line the orbit a planned burn would give you. A ring marks a closest approach.</p>
-      <p>In the close-in view, the target is at the centre, the direction it travels is to the right, and up is away from Earth. The red dashed shape is how close it would let you come, from each direction, before noticing you, and the cyan dotted ring is your strike range.</p>
+      <p>In the close-in view, the target is at the center, the direction it travels is to the right, and up is away from Earth. The dashed shape is how close it would let you come, from each direction, before noticing you, colored by what would notice you there: <i style="color: #ffd36b">cameras</i>, <i style="color: #ff7a5c">infrared</i>, <i style="color: #b99bff">radar</i>, or the <i style="color: #ff9ad5">jammer</i> being heard. The cyan dotted ring is your strike range.</p>
       <p>Keys: arrows plan a burn, Enter burns, Space pauses, + and − set the warp, 1–4 skip ahead, F fires, J jams, G switches engines, V switches views.</p>
     </div>
   </div>
@@ -346,7 +347,7 @@
     <h3>Time</h3>
     <p>Use + and − to speed time up, to 1000 times. Apo, Peri, Closest and Shadow skip ahead and pause. Time slows down by itself when the target is near, and, with a burn planned, as its window opens; it pauses at the window's best moment.</p>
     <h3>Staying hidden</h3>
-    <p>The target's suspicion rises while it can sense you, and slowly falls when it can't. In the close-in view, a red dashed shape shows how close you could come, from each direction, before it noticed.</p>
+    <p>The target's suspicion rises while it can sense you, and slowly falls when it can't. In the close-in view, a dashed shape shows how close you could come, from each direction, before it noticed, and its color says which sensor would notice you first: yellow for cameras, red for infrared, violet for radar, pink for your jammer being heard. Switch the jammer on and the violet shrinks, but pink can take its place.</p>
     <ul>
       <li><b>Sunlight</b>: its cameras see you when you are lit. Earth's shadow hides you, and so does the Sun's glare, if you come at it with the Sun behind you.</li>
       <li><b>The Earth behind you</b>: against the Earth below, you are much harder to pick out than against black space.</li>
@@ -543,7 +544,7 @@ const CORE = (function () {
   }
   // The closest approaches of two orbits between t0 and t1: each time their separation stops shrinking and starts
   // to grow. Returns the closest { t, d } (with .first, the earliest), or null if there is none. Two satellites in
-  // one orbit keep their distance, give or take rounding, so a dip has to be deeper than a millimetre to count.
+  // one orbit keep their distance, give or take rounding, so a dip has to be deeper than a millimeter to count.
   function approaches(a, b, t0, t1, perOrbit) {
     const P = Math.min(elements(a).P, elements(b).P);
     const n = Math.max(8, Math.ceil((t1 - t0) / P * (perOrbit || 240))), h = (t1 - t0) / n;
@@ -599,15 +600,21 @@ const CORE = (function () {
   }
   // How close you could come from direction a (radians in tg's local frame: 0 ahead, π/2 up) before the target's
   // suspicion starts to rise: where the rates of sense() add up to DECAY. Close in, the light is the target's own.
-  function seenWithin(s, tg, a) {
+  // Also which sensor gives you away there, the one adding most to the suspicion: 'opt' (its cameras), 'ir', 'radar'
+  // or 'jam' (it hears your jamming).
+  function seenBy(s, tg, a) {
     const T = s.m.target, F = frame(tg), g = GAIN[s.alert];
     const u = [F.ah[0] * Math.cos(a) + F.rh[0] * Math.sin(a), F.ah[1] * Math.cos(a) + F.rh[1] * Math.sin(a)];
     const c = cover(tg.r, u, sunlit(tg.r));
-    const A = g * (T.opt * c.opt * SEE_SUN ** 2 + T.ir * c.ir * SEE_HEAT ** 2 + (s.jam ? HEAR_JAM ** 2 : 0));
-    const B = g * T.radar * (s.jam ? JAM_CUT : 1) * SEE_RADAR ** 4;
+    const opt = g * T.opt * c.opt * SEE_SUN ** 2, ir = g * T.ir * c.ir * SEE_HEAT ** 2, jam = s.jam ? g * HEAR_JAM ** 2 : 0;
+    const A = opt + ir + jam, B = g * T.radar * (s.jam ? JAM_CUT : 1) * SEE_RADAR ** 4;
     const x = B > 0 ? (Math.sqrt(A * A + 4 * B) - A) / (2 * B) : 1 / A;   // solves A/d² + B/d⁴ = 1 for x = 1/d²
-    return 1 / Math.sqrt(x);
+    const parts = { opt, ir, jam, radar: B * x };   // each one's share, at that range, on the same 1/d² footing
+    let by = 'opt';
+    for (const k in parts) if (parts[k] > parts[by]) by = k;
+    return { d: 1 / Math.sqrt(x), by };
   }
+  const seenWithin = (s, tg, a) => seenBy(s, tg, a).d;
   // The suspicion % a burn of dv m/s adds: the plume of the main engine is bright, cold gas much less so.
   function plume(s, dv, gas, me, tg) {
     if (occluded(tg, me)) return 0;
@@ -817,7 +824,7 @@ const CORE = (function () {
       target: { name: 'Magpie', kind: 'a reconnaissance satellite', opt: 4, ir: 1.5, radar: 1.5, decoys: 1, evades: 2, evadeDv: 5 },
       brief: [
         'Magpie is 180 km below you and 25° behind. Its cameras are sharp: come at it in sunlight and it will see you from 40 km.',
-        'Arrange to meet it in Earth\'s shadow. Even there its radar and infrared will pick you up a few kilometres out, so switch on your jammer for the last stretch, and keep an eye on the battery: in the shadow, nothing recharges it.',
+        'Arrange to meet it in Earth\'s shadow. Even there its radar and infrared will pick you up a few kilometers out, so switch on your jammer for the last stretch, and keep an eye on the battery: in the shadow, nothing recharges it.',
       ],
     },
     {
@@ -879,7 +886,7 @@ const CORE = (function () {
     MU, RE, TAU, DEG, SUN, ATMOS, STRIKE, REACT, KV_SPEED, SUSPECT_AT, DECAY, GAIN, GLARE,
     SEE_SUN, SEE_HEAT, SEE_RADAR, HEAR_JAM, JAM_CUT,
     len, sub, dot, rng, propagate, elements, orbitFrom, frame, toLocal, burned, nextApsis, sunlit, nextLight,
-    separation, rangeRate, approaches, minSeparation, occluded, sense, seenWithin, plume,
+    separation, rangeRate, approaches, minSeparation, occluded, sense, seenWithin, seenBy, plume,
     start, step, burn, setJam, solution, fire, warpCap, MISSIONS, hohmann, randomMission,
   };
 })(); // CORE
@@ -894,13 +901,19 @@ const CORE = (function () {
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
   const calm = () => reduceMotion.matches;
   const COL = { you: '#55d6ea', tgt: '#ff6b57', plan: '#f2f5fa', sun: '#ffd36b', ok: '#71d394', warn: '#ffb547', bad: '#ff5d5d', dim: '#8d9cb2' };
+  // The target's sensors, as the close-in view names and colors them.
+  let seenKey = '';   // the sensors on the outline in the close-in view, for the key under it
+  const SENSOR = {
+    opt: { name: 'cameras', col: '#ffd36b', sees: 'cameras see you' }, ir: { name: 'infrared', col: '#ff7a5c', sees: 'infrared sees you' },
+    radar: { name: 'radar', col: '#b99bff', sees: 'radar sees you' }, jam: { name: 'jammer heard', col: '#ff9ad5', sees: 'jammer heard' },
+  };
   const MONO = 'ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace';
 
   const stage = $('#stage'), cv = $('#view'), ctx = cv.getContext('2d');
   const pad = $('#pad'), pctx = pad.getContext('2d');
   const E = {};
   for (const id of ['clock', 'left', 'warp-info', 'light', 'det', 'det-fill', 'det-state', 'det-pct', 'det-why', 'toast',
-    'i-range', 'i-closing', 'i-ca', 'r-plan', 'i-plan', 'r-strike', 'i-strike', 'btn-jam', 'btn-fire', 'e-main', 'e-gas',
+    'r-seen', 'i-seen', 'i-range', 'i-closing', 'i-ca', 'r-plan', 'i-plan', 'r-strike', 'i-strike', 'btn-jam', 'btn-fire', 'e-main', 'e-gas',
     'main-bar', 'main-v', 'gas-bar', 'gas-v', 'pwr', 'pwr-bar', 'pwr-v', 'kv-v', 'pro-v', 'out-v', 'dv-info', 'btn-clear',
     'btn-burn', 'btn-pause', 'btn-slower', 'btn-faster', 'warp-v', 'v-orbit', 'v-close']) E[id] = document.getElementById(id);
   const skipBtns = [...document.querySelectorAll('[data-skip]')];
@@ -1107,6 +1120,7 @@ const CORE = (function () {
   }
   function draw() {
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    seenKey = '';
     if (!S) { ctx.fillStyle = '#04060b'; ctx.fillRect(0, 0, W, H); drawStars(); }
     else if (view === 'orbit') drawOrbitView();
     else drawCloseView();
@@ -1308,17 +1322,30 @@ const CORE = (function () {
 
     // Where the target would notice you: how close you could come from each direction before its suspicion rose.
     if (!S.dead && S.alert < 2) {
-      ctx.beginPath();
+      const edge = [];
       for (let i = 0; i <= 144; i++) {
-        const a = i * C.TAU / 144, R = C.seenWithin(S, tg, a), q = P([R * Math.cos(a), R * Math.sin(a)]);
-        if (i) ctx.lineTo(clampPx(q[0]), clampPx(q[1])); else ctx.moveTo(clampPx(q[0]), clampPx(q[1]));
+        const a = i * C.TAU / 144, e = C.seenBy(S, tg, a), q = P([e.d * Math.cos(a), e.d * Math.sin(a)]);
+        edge.push({ x: clampPx(q[0]), y: clampPx(q[1]), by: e.by });
       }
+      ctx.beginPath();
+      for (const q of edge) ctx.lineTo(q.x, q.y);
       ctx.closePath();
       ctx.fillStyle = 'rgba(255, 93, 93, 0.07)'; ctx.fill();
-      ctx.save(); ctx.setLineDash([3, 3]); ctx.strokeStyle = 'rgba(255, 93, 93, 0.5)'; ctx.lineWidth = 1; ctx.stroke(); ctx.restore();
-      const aMe = Math.atan2(rel[1], rel[0]), Rme = C.seenWithin(S, tg, aMe), qm = P([Rme * Math.cos(aMe), Rme * Math.sin(aMe)]);
+      // the outline is drawn in the color of the sensor that would notice you there
+      ctx.save(); ctx.setLineDash([3, 3]); ctx.lineWidth = 1.25; ctx.globalAlpha = 0.8;
+      const used = new Set();
+      for (let i = 0; i < 144;) {
+        const by = edge[i].by;
+        used.add(by);
+        ctx.beginPath(); ctx.moveTo(edge[i].x, edge[i].y);
+        do { i++; ctx.lineTo(edge[i].x, edge[i].y); } while (i < 144 && edge[i].by === by);
+        ctx.strokeStyle = SENSOR[by].col; ctx.stroke();
+      }
+      ctx.restore();
+      const aMe = Math.atan2(rel[1], rel[0]), me = C.seenBy(S, tg, aMe), Rme = me.d, qm = P([Rme * Math.cos(aMe), Rme * Math.sin(aMe)]);
       const meq = P(rel), roomy = Rme * k > 64 && Math.hypot(qm[0] - meq[0], qm[1] - meq[1]) > 30;
-      if (roomy && qm[0] > 50 && qm[0] < W - 50 && qm[1] > 80 && qm[1] < H - 70) label('seen inside ' + fmtDist(Rme), qm[0], qm[1] - 9, 'rgba(255, 150, 140, 0.95)', 'center');
+      if (roomy && qm[0] > 50 && qm[0] < W - 50 && qm[1] > 80 && qm[1] < H - 70) label(SENSOR[me.by].sees + ' inside ' + fmtDist(Rme), qm[0], qm[1] - 9, SENSOR[me.by].col, 'center');
+      seenKey = Object.keys(SENSOR).filter(by => used.has(by)).join(' ');
     }
 
     // range rings
@@ -1332,7 +1359,7 @@ const CORE = (function () {
       ctx.save(); ctx.setLineDash([2, 4]);
       ring(cx, cy, strikePx, 'rgba(85, 214, 234, 0.7)', 1.5);
       ctx.restore();
-      // on the ring, left of centre and a little low: the corners are taken by the read-outs
+      // on the ring, left of center and a little low: the corners are taken by the read-outs
       if (strikePx > 28) label('strike 5 km', cx - strikePx * 0.94 + 4, cy + strikePx * 0.34 + 2, 'rgba(85, 214, 234, 0.9)');
     }
     label('ahead ▸', W - 10, cy - 10, COL.dim, 'right');
@@ -1435,16 +1462,24 @@ const CORE = (function () {
     plan = { pro: roundDv(pro) || 0, out: roundDv(out) || 0 };
     kick();
   }
-  let padDrag = null;
-  function padAt(e) {
-    const r = pad.getBoundingClientRect(), R = r.width / 2 - 8;
-    const x = (e.clientX - r.left - r.width / 2) / R, y = -(e.clientY - r.top - r.height / 2) / R;
+  // The burn at (x, y) on the pad, in units of its radius, for a pad whose rim is max m/s, in steps of step m/s.
+  // Each part is rounded toward zero, so the burn is never more than max: rounding both up could take a burn
+  // on the rim past the propellant you have, and the pad would flicker red.
+  function padPlan(x, y, max, step) {
     let rr = Math.min(1, Math.hypot(x, y)), a = Math.atan2(y, x);
     const axis = Math.round(a / (Math.PI / 2)) * (Math.PI / 2);
     if (Math.abs(a - axis) < 0.08) a = axis;   // snap to the four directions
     if (rr < 0.05) rr = 0;
-    const m = padMax() * rr * rr;   // squared, for fine control near the middle
-    setPlan(m * Math.cos(a), m * Math.sin(a));
+    const m = max * rr * rr;   // squared, for fine control near the middle
+    const toward0 = v => Math.trunc(v / step + 1e-9 * Math.sign(v)) * step;   // the nudge keeps 0.3 from becoming 0.29999
+    return { pro: toward0(m * Math.cos(a)), out: toward0(m * Math.sin(a)) };
+  }
+  let padDrag = null;
+  function padAt(e) {
+    const r = pad.getBoundingClientRect(), R = r.width / 2 - 8;
+    const x = (e.clientX - r.left - r.width / 2) / R, y = -(e.clientY - r.top - r.height / 2) / R;
+    const p = padPlan(x, y, padMax(), gas ? 0.01 : 0.1);
+    setPlan(p.pro, p.out);
   }
   pad.addEventListener('pointerdown', e => {
     if (!S || S.over || !e.isPrimary || e.button > 0) return;
@@ -1521,6 +1556,15 @@ const CORE = (function () {
     const none = 'none within ' + Math.max(1, Math.round(horizon() / 3600)) + ' h';
     put(E['i-ca'], S.dead ? '—' : caCur ? fmtCa(caCur) : none);
     E['r-plan'].hidden = !planOrbit;
+    E['r-seen'].hidden = !seenKey;
+    if (shown.get(E['i-seen']) !== seenKey) {
+      shown.set(E['i-seen'], seenKey);
+      E['i-seen'].replaceChildren(...(seenKey ? seenKey.split(' ') : []).flatMap((by, i) => {
+        const b = document.createElement('b');
+        b.textContent = SENSOR[by].name; b.style.color = SENSOR[by].col;
+        return i ? [', ', b] : [b];
+      }));
+    }
     if (planOrbit) put(E['i-plan'], caPlan ? fmtCa(caPlan) : none);
     const sol = C.solution(S);
     const showStrike = !S.dead && range <= C.STRIKE * 1.6 && S.kv > 0;
@@ -1606,7 +1650,7 @@ const CORE = (function () {
   function setView(v) {
     view = v; manualZoom = 0; zoomKm = 0;
     attr(E['v-orbit'], 'aria-pressed', String(v === 'orbit')); attr(E['v-close'], 'aria-pressed', String(v === 'close'));
-    cv.setAttribute('aria-label', v === 'orbit' ? 'Orbit view: Earth, your orbit and the target\'s' : 'Close-in view, centred on the target');
+    cv.setAttribute('aria-label', v === 'orbit' ? 'Orbit view: Earth, your orbit and the target\'s' : 'Close-in view, centered on the target');
     kick();
   }
 
@@ -1893,7 +1937,7 @@ const CORE = (function () {
       const tgt = C.orbitFrom({ alt: 600, at: 0 }), tc = 1234, meet = C.propagate(tgt, tc);
       const other = { r: meet.r, v: [meet.v[0] * 0.995 + 0.02, meet.v[1] * 0.995], t: tc };
       const ca = C.approaches(other, tgt, 0, 6000);
-      ok(ca && ca.d < 1e-3 && near(ca.t, tc, 0.1), 'two orbits that cross at one moment: found, to the metre and the tenth of a second');
+      ok(ca && ca.d < 1e-3 && near(ca.t, tc, 0.1), 'two orbits that cross at one moment: found, to the meter and the tenth of a second');
       const behind = C.orbitFrom({ alt: 600, at: -1 });
       ok(C.approaches(behind, tgt, 0, 20000) === null, 'two satellites in one orbit never get closer');
       const pass = { r: [meet.r[0] + 3, meet.r[1]], v: [meet.v[0], meet.v[1] + 0.3], t: tc };
@@ -1929,6 +1973,13 @@ const CORE = (function () {
         ok(rate(R * 0.98) > C.DECAY && rate(R * 1.02) < C.DECAY, 'the range drawn round the target matches its sensors (' + fmtDist(R) + (jam ? ', jamming' : '') + ')');
       }
       sM.jam = false;
+      // which sensor the close-in view says would notice you first
+      const day = C.start(mission({ target: { opt: 1, ir: 1, radar: 1 } })), tgL = { r: [C.RE + 500, 0], v: [0, Math.sqrt(C.MU / (C.RE + 500))], t: 0 };
+      ok(C.sunlit(tgL.r) && C.seenBy(day, tgL, 0).by === 'opt', 'in sunlight, against black space, the cameras see you first');
+      const dark = C.start(mission({ target: { opt: 1, ir: 0.1, radar: 1 } })), tgD = { r: [-(C.RE + 500), 0], v: [0, -Math.sqrt(C.MU / (C.RE + 500))], t: 0 };
+      ok(!C.sunlit(tgD.r) && C.seenBy(dark, tgD, 0.3).by === 'radar', 'in shadow, radar is what sees you');
+      dark.jam = true;
+      ok(C.seenBy(dark, tgD, 0.3).by === 'jam' && C.seenBy(dark, tgD, 0.3).d < C.seenWithin({ ...dark, jam: false }, tgD, 0.3), 'jamming: the range shrinks, and what gives you away is the jamming');
       const pm = C.plume(sM, 10, false, at(0, 10), T0), pg = C.plume(sM, 10, true, at(0, 10), T0);
       ok(pm >= 25 && pg < pm / 10, 'a main-engine plume is bright, cold gas faint');
 
@@ -2028,6 +2079,18 @@ const CORE = (function () {
         const c = C.approaches(C.burned(g.you, m.window.t, m.window.dv, 0), g.tgt, m.window.t, m.time);
         ok(c && c.d < 2 && Math.abs(m.window.dv) < m.main && c.t < m.time - 3600, 'a random hunt (seed ' + seed + ') has a Hohmann window it can afford');
       }
+
+      // ---- the burn pad ----
+      let rimOver = 0;
+      for (const [max, step] of [[30, 0.1], [130, 0.1], [6, 0.01], [12, 0.01]]) {
+        for (let k = 0; k < 3600; k++) {
+          const a = k / 3600 * C.TAU, p = padPlan(Math.cos(a) * 1.2, Math.sin(a) * 1.2, max, step), dv = Math.hypot(p.pro, p.out);
+          if (dv > max + 1e-9 || dv < max - 2 * step) rimOver++;
+        }
+      }
+      ok(rimOver === 0, 'the burn pad: all the way round the rim, a burn is just under the full tank, never over (' + rimOver + ' misses)');
+      const half = padPlan(Math.SQRT1_2, 0, 30, 0.1);
+      ok(near(half.pro, 15, 1e-9) && half.out === 0, 'the burn pad: halfway out is a quarter of the propellant');
 
       // ---- saved ratings ----
       ok(JSON.stringify(parseProgress({ best: { gap: 3, climb: 1 } })) === JSON.stringify({ best: { gap: 3, climb: 1 } }), 'ratings: a good save is read back');
