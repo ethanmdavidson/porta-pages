@@ -1,0 +1,1148 @@
+<!DOCTYPE html>
+<!--
+  Peer-to-peer file transfer
+
+  Send files straight from one device to another, with no server in
+  between. The two browsers talk over a WebRTC data channel, and you set up
+  the connection yourself by passing two short codes between the devices,
+  as QR codes or as text, instead of through a signaling server.
+
+  How to use it:
+    1. On one device, press "Start a connection". It shows a code and a
+       QR code for it.
+    2. On the other device, open this page and enter that code: scan the
+       QR code, or paste the text. When this page is served from a web
+       address, the QR code and the copied text are a link, so a phone's
+       own camera app can open it directly. The second device then shows a
+       reply code.
+    3. Enter the reply on the first device the same way. The devices
+       connect, and either one can send files. Each file is checked with
+       SHA-256 when it arrives, and a "Save" link appears for it.
+  Both devices show a check number once connected. If the numbers match,
+  you are connected to each other and not to someone who intercepted the
+  codes.
+
+  Network access: none to any server. The page uses no STUN or TURN
+  server, so it only connects devices that can reach each other directly,
+  which in practice means the same Wi-Fi or local network (and not one
+  that isolates its clients from each other, as some guest and public
+  networks do). WebRTC isn't governed by the Content-Security-Policy's
+  connect-src, so default-src 'none' doesn't block it. The only traffic is
+  between the two devices, and it is encrypted by WebRTC (DTLS).
+
+  Limits: the receiving device keeps each file in memory until you save it,
+  so very large files may not fit. Scanning QR codes inside the page needs
+  BarcodeDetector, which only some Chromium browsers have; everywhere else,
+  use the camera app (for the first code, on a hosted page) or paste text.
+
+  Open this file with #test at the end of the URL to run the built-in
+  self-test of the hashing, the connection codes, the QR encoder and the
+  transfer protocol, and show the results on the page. It doesn't connect
+  to anything.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Peer-to-peer file transfer</title>
+<meta name="description" content="Send files directly between two devices over WebRTC, connected by scanning or pasting two codes. No server involved.">
+<style>
+  :root {
+    --paper: #f4f5f2; --panel: #ffffff; --ink: #1d2630; --ink-2: #4c5764; --rule: #d4d9d4;
+    --accent: #1f6a6a; --accent-ink: #ffffff; --ok: #1f6b43; --ok-bg: #e3f2e9; --bad: #9b2c2c; --bad-bg: #f8e3e3;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) { :root {
+    --paper: #13181d; --panel: #1b2228; --ink: #e5e9ec; --ink-2: #b2bcc5; --rule: #2d363e;
+    --accent: #5fc0bd; --accent-ink: #0b1a1a; --ok: #6cc49a; --ok-bg: #1e3a2d; --bad: #e08a96; --bad-bg: #44262b;
+  } }
+  *, *::before, *::after { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main {
+    max-width: 40rem; margin: 0 auto;
+    padding: max(1.5rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) 3rem max(1rem, env(safe-area-inset-left));
+  }
+  h1 { margin: 0 0 0.25rem; font-size: 1.6rem; }
+  h2 { margin: 0 0 0.5rem; font-size: 1.1rem; }
+  h2:not(:first-child) { margin-top: 1.5rem; }
+  p { margin: 0 0 0.75rem; }
+  .lede, .hint { color: var(--ink-2); }
+  .hint { font-size: 0.9375rem; }
+  .card { margin-top: 1.25rem; padding: 1rem; border: 1px solid var(--rule); border-radius: 10px; background: var(--panel); }
+  .row { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+  button {
+    font: inherit; padding: 0.5rem 0.9rem; border-radius: 8px; border: 1px solid var(--rule);
+    background: var(--panel); color: var(--ink); cursor: pointer; min-height: 2.75rem;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  button:focus-visible, textarea:focus-visible, .drop:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+  textarea {
+    display: block; width: 100%; font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace; padding: 0.5rem;
+    border: 1px solid var(--rule); border-radius: 8px; background: var(--paper); color: var(--ink);
+    resize: vertical; word-break: break-all;
+  }
+  .qr { display: flex; justify-content: center; margin: 0.75rem 0; }
+  .qr svg { width: min(100%, 18rem); height: auto; border-radius: 6px; }
+  .code { margin: 0.5rem 0; }
+  .error { color: var(--bad); }
+  .error:empty { display: none; }
+  .status { color: var(--ink-2); }
+  .check { font: 600 1.5rem/1.2 ui-monospace, Menlo, Consolas, monospace; letter-spacing: 0.05em; }
+  .drop {
+    display: block; margin: 1rem 0; padding: 1.5rem 1rem; text-align: center; border: 2px dashed var(--rule);
+    border-radius: 10px; cursor: pointer; color: var(--ink-2);
+  }
+  .drop.over { border-color: var(--accent); color: var(--ink); }
+  .drop input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+  .drop strong { color: var(--accent); }
+  #transfers { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; }
+  #transfers li { padding: 0.6rem 0.75rem; border: 1px solid var(--rule); border-radius: 8px; }
+  #transfers .name { font-weight: 600; overflow-wrap: anywhere; }
+  #transfers .meta { font-size: 0.875rem; color: var(--ink-2); }
+  #transfers .meta.ok { color: var(--ok); }
+  #transfers .meta.bad { color: var(--bad); }
+  #transfers progress { display: block; width: 100%; margin: 0.35rem 0; }
+  #transfers a { color: var(--accent); font-weight: 600; }
+  #scanner {
+    position: fixed; inset: 0; z-index: 5; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 1rem; padding: 1rem; background: rgb(0 0 0 / 0.85);
+  }
+  #scanner video { max-width: 100%; max-height: 70vh; border-radius: 8px; }
+  details.about { margin-top: 1.5rem; color: var(--ink-2); font-size: 0.9375rem; }
+  details.about summary { cursor: pointer; color: var(--ink); }
+  details.about p { margin-top: 0.5rem; }
+  #reset { margin-top: 1rem; }
+  #test-report { position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 10; max-height: 40vh; overflow: auto; padding: 10px 14px; border: 1px solid; border-radius: 8px; font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; }
+  #test-report.pass { background: var(--ok-bg); color: var(--ok); }
+  #test-report.fail { background: var(--bad-bg); color: var(--bad); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Peer-to-peer file transfer</h1>
+  <p class="lede">Send files straight from one device to another, with no server in between. You connect the two devices yourself by passing two short codes between them.</p>
+
+  <section id="choose" class="card">
+    <h2>Connect two devices</h2>
+    <p class="hint">Both devices need to be on the same Wi-Fi or local network. Start on one, and join on the other.</p>
+    <div class="row">
+      <button id="start" class="primary" type="button">Start a connection</button>
+      <button id="join" type="button">Join with a code</button>
+    </div>
+  </section>
+
+  <section id="offer-step" class="card" hidden>
+    <h2>1. Give this code to the other device</h2>
+    <p class="hint" id="offer-hint"></p>
+    <div class="qr" id="offer-qr"></div>
+    <textarea id="offer-code" class="code" rows="3" readonly aria-label="Connection code"></textarea>
+    <div class="row">
+      <button id="offer-copy" type="button">Copy</button>
+      <button id="offer-share" type="button" hidden>Share</button>
+    </div>
+    <h2>2. Enter its reply</h2>
+    <p class="hint">The other device shows a reply code once it has this one. Scan or paste it here.</p>
+    <textarea id="answer-in" class="code" rows="3" placeholder="Paste the reply code" aria-label="Reply code" autocomplete="off" spellcheck="false"></textarea>
+    <div class="row"><button id="answer-scan" type="button" hidden>Scan the reply</button></div>
+    <p class="error" id="answer-error" role="alert"></p>
+  </section>
+
+  <section id="join-step" class="card" hidden>
+    <h2>1. Enter the code from the other device</h2>
+    <p class="hint">On the other device, press "Start a connection". Then scan or paste its code here.</p>
+    <textarea id="offer-in" class="code" rows="3" placeholder="Paste the code" aria-label="Connection code from the other device" autocomplete="off" spellcheck="false"></textarea>
+    <div class="row"><button id="offer-scan" type="button" hidden>Scan the code</button></div>
+    <p class="error" id="offer-error" role="alert"></p>
+    <div id="answer-out" hidden>
+      <h2>2. Give this reply to the other device</h2>
+      <p class="hint" id="answer-hint"></p>
+      <div class="qr" id="answer-qr"></div>
+      <textarea id="answer-code" class="code" rows="3" readonly aria-label="Reply code"></textarea>
+      <div class="row">
+        <button id="answer-copy" type="button">Copy</button>
+        <button id="answer-share" type="button" hidden>Share</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="connected" class="card" hidden>
+    <h2>Connected</h2>
+    <p>Check number: <span class="check" id="check"></span></p>
+    <p class="hint">The other device shows a check number too. If they match, nobody is in between you.</p>
+    <label class="drop" id="drop">
+      <input type="file" id="files" multiple>
+      <strong>Choose files to send</strong><br>or drop them here
+    </label>
+    <ul id="transfers" aria-live="polite"></ul>
+  </section>
+
+  <p class="status" id="status" role="status"></p>
+  <button id="reset" type="button" hidden>Start over</button>
+
+  <details class="about">
+    <summary>How it works, and its limits</summary>
+    <p>The devices connect with WebRTC, the same technology video calls use. To connect, each browser needs a few facts about the other: its network addresses, a password for the connection, and the fingerprint of its encryption key. Normally a server passes these along. Here, you do, as the two codes.</p>
+    <p>There is no STUN or TURN server either, so the devices can only connect when they can reach each other directly, which usually means the same local network. Some guest and public Wi-Fi networks stop devices from reaching each other, and then this won't connect.</p>
+    <p>Files go directly between the devices, encrypted. Each one is checked with SHA-256 on arrival. The receiving device keeps files in memory until you save them, so very large files may not fit.</p>
+    <p>Scanning a QR code inside the page only works in browsers that have a barcode detector, such as Chrome on Android and macOS. Elsewhere, scan with the camera app, or copy and paste the code. A phone's camera app can open the first code when this page is served from a web address, because the code is then a link.</p>
+  </details>
+</main>
+
+<div id="scanner" hidden>
+  <video id="scanner-video" playsinline muted></video>
+  <p style="color: #fff; margin: 0;">Point the camera at the QR code</p>
+  <button id="scanner-cancel" type="button">Cancel</button>
+</div>
+
+<script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+
+/* ===================== SHA-256 (incremental, so files can be hashed chunk by chunk) ===================== */
+const SHA_K = new Uint32Array([
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+]);
+
+class Sha256 {
+  constructor() {
+    this.h = new Uint32Array([0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19]);
+    this.block = new Uint8Array(64);
+    this.used = 0;
+    this.length = 0;
+    this.w = new Uint32Array(64);
+  }
+  update(bytes) {
+    let i = 0;
+    this.length += bytes.length;
+    if (this.used) {
+      const take = Math.min(64 - this.used, bytes.length);
+      this.block.set(bytes.subarray(0, take), this.used);
+      this.used += take; i = take;
+      if (this.used < 64) return this;
+      this.compress(this.block, 0); this.used = 0;
+    }
+    for (; i + 64 <= bytes.length; i += 64) this.compress(bytes, i);
+    if (i < bytes.length) { this.block.set(bytes.subarray(i)); this.used = bytes.length - i; }
+    return this;
+  }
+  compress(b, at) {
+    const w = this.w, h = this.h;
+    for (let t = 0; t < 16; t++) { const j = at + t * 4; w[t] = (b[j] << 24) | (b[j + 1] << 16) | (b[j + 2] << 8) | b[j + 3]; }
+    for (let t = 16; t < 64; t++) {
+      const x = w[t - 15], y = w[t - 2];
+      const s0 = ((x >>> 7) | (x << 25)) ^ ((x >>> 18) | (x << 14)) ^ (x >>> 3);
+      const s1 = ((y >>> 17) | (y << 15)) ^ ((y >>> 19) | (y << 13)) ^ (y >>> 10);
+      w[t] = (w[t - 16] + s0 + w[t - 7] + s1) | 0;
+    }
+    let a = h[0], bb = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], hh = h[7];
+    for (let t = 0; t < 64; t++) {
+      const S1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
+      const t1 = (hh + S1 + ((e & f) ^ (~e & g)) + SHA_K[t] + w[t]) | 0;
+      const S0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
+      const t2 = (S0 + ((a & bb) ^ (a & c) ^ (bb & c))) | 0;
+      hh = g; g = f; f = e; e = (d + t1) | 0; d = c; c = bb; bb = a; a = (t1 + t2) | 0;
+    }
+    h[0] += a; h[1] += bb; h[2] += c; h[3] += d; h[4] += e; h[5] += f; h[6] += g; h[7] += hh;
+  }
+  digest() {
+    const bits = this.length * 8;
+    const tail = new Uint8Array(((this.used + 9 + 63) >> 6) * 64 - this.used);
+    tail[0] = 0x80;
+    const n = tail.length;
+    const hi = Math.floor(bits / 0x100000000), lo = bits >>> 0;
+    for (let k = 0; k < 4; k++) { tail[n - 8 + k] = (hi >>> (24 - 8 * k)) & 255; tail[n - 4 + k] = (lo >>> (24 - 8 * k)) & 255; }
+    const len = this.length;
+    this.update(tail);
+    this.length = len;
+    const out = new Uint8Array(32);
+    for (let k = 0; k < 8; k++) { out[k * 4] = this.h[k] >>> 24; out[k * 4 + 1] = this.h[k] >>> 16; out[k * 4 + 2] = this.h[k] >>> 8; out[k * 4 + 3] = this.h[k]; }
+    return out;
+  }
+}
+const toHex = (bytes) => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+const sha256Hex = (bytes) => toHex(new Sha256().update(bytes).digest());
+
+/* ===================== QR CODE ENCODER (byte mode, error correction level M) ===================== */
+// After Project Nayuki's QR Code generator (MIT), cut down to what this page needs.
+const QR_ECC_M = [-1, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26, 30, 22, 22, 24, 24, 28, 28, 26, 26, 26, 26, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28];
+const QR_BLOCKS_M = [-1, 1, 1, 1, 2, 2, 4, 4, 4, 5, 5, 5, 8, 9, 9, 10, 10, 11, 13, 14, 16, 17, 17, 18, 20, 21, 23, 25, 26, 28, 29, 31, 33, 35, 37, 38, 40, 43, 45, 47, 49];
+
+function qrRawModules(v) {
+  let r = (16 * v + 128) * v + 64;
+  if (v >= 2) { const n = Math.floor(v / 7) + 2; r -= (25 * n - 10) * n - 55; if (v >= 7) r -= 36; }
+  return r;
+}
+const qrDataCodewords = (v) => Math.floor(qrRawModules(v) / 8) - QR_ECC_M[v] * QR_BLOCKS_M[v];
+
+function qrAlignment(v) {
+  if (v === 1) return [];
+  const n = Math.floor(v / 7) + 2, size = v * 4 + 17;
+  const step = Math.floor((v * 8 + n * 3 + 5) / (n * 4 - 4)) * 2;
+  const r = [6];
+  for (let p = size - 7; r.length < n; p -= step) r.splice(1, 0, p);
+  return r;
+}
+
+function gfMul(x, y) {
+  let z = 0;
+  for (let i = 7; i >= 0; i--) { z = (z << 1) ^ ((z >>> 7) * 0x11d); z ^= ((y >>> i) & 1) * x; }
+  return z;
+}
+function rsDivisor(degree) {
+  const r = new Array(degree).fill(0);
+  r[degree - 1] = 1;
+  let root = 1;
+  for (let i = 0; i < degree; i++) {
+    for (let j = 0; j < degree; j++) { r[j] = gfMul(r[j], root); if (j + 1 < degree) r[j] ^= r[j + 1]; }
+    root = gfMul(root, 2);
+  }
+  return r;
+}
+function rsRemainder(data, divisor) {
+  const r = divisor.map(() => 0);
+  for (const b of data) {
+    const factor = b ^ r.shift();
+    r.push(0);
+    divisor.forEach((coef, i) => { r[i] ^= gfMul(coef, factor); });
+  }
+  return r;
+}
+
+const QR_MASKS = [
+  (x, y) => (x + y) % 2 === 0,
+  (x, y) => y % 2 === 0,
+  (x) => x % 3 === 0,
+  (x, y) => (x + y) % 3 === 0,
+  (x, y) => (Math.floor(x / 3) + Math.floor(y / 2)) % 2 === 0,
+  (x, y) => (x * y) % 2 + (x * y) % 3 === 0,
+  (x, y) => ((x * y) % 2 + (x * y) % 3) % 2 === 0,
+  (x, y) => ((x + y) % 2 + (x * y) % 3) % 2 === 0,
+];
+
+function qrFormatBits(mask) {
+  const data = (0 << 3) | mask; // level M is 00
+  let rem = data;
+  for (let i = 0; i < 10; i++) rem = (rem << 1) ^ ((rem >>> 9) * 0x537);
+  return ((data << 10) | rem) ^ 0x5412;
+}
+
+function qrPenalty(m, size) {
+  let p = 0;
+  for (let pass = 0; pass < 2; pass++) {
+    for (let a = 0; a < size; a++) {
+      let run = 0, prev = -1, line = '';
+      for (let b = 0; b < size; b++) {
+        const c = pass ? m[b * size + a] : m[a * size + b];
+        line += c;
+        if (c === prev) { run++; if (run === 5) p += 3; else if (run > 5) p++; } else { run = 1; prev = c; }
+      }
+      const padded = '0000' + line + '0000';
+      for (const pat of ['10111010000', '00001011101']) {
+        for (let i = padded.indexOf(pat); i !== -1; i = padded.indexOf(pat, i + 1)) p += 40;
+      }
+    }
+  }
+  let dark = 0;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const c = m[y * size + x];
+      dark += c;
+      if (x < size - 1 && y < size - 1 && c === m[y * size + x + 1] && c === m[(y + 1) * size + x] && c === m[(y + 1) * size + x + 1]) p += 3;
+    }
+  }
+  const total = size * size;
+  p += (Math.ceil(Math.abs(dark * 20 - total * 10) / total) - 1) * 10;
+  return p;
+}
+
+// Returns { version, size, mask, modules } where modules[y * size + x] is 1 for a dark module.
+function qrEncode(bytes) {
+  let v = 1;
+  while (4 + (v < 10 ? 8 : 16) + bytes.length * 8 > qrDataCodewords(v) * 8) { if (++v > 40) throw new Error('too much data for a QR code'); }
+  const capBits = qrDataCodewords(v) * 8;
+  const bits = [];
+  const put = (val, n) => { for (let i = n - 1; i >= 0; i--) bits.push((val >>> i) & 1); };
+  put(4, 4); put(bytes.length, v < 10 ? 8 : 16);
+  for (const b of bytes) put(b, 8);
+  put(0, Math.min(4, capBits - bits.length));
+  put(0, (8 - (bits.length % 8)) % 8);
+  const data = [];
+  for (let i = 0; i < bits.length; i += 8) { let b = 0; for (let j = 0; j < 8; j++) b = (b << 1) | bits[i + j]; data.push(b); }
+  for (let pad = 0xec; data.length < capBits / 8; pad ^= 0xec ^ 0x11) data.push(pad);
+
+  const nb = QR_BLOCKS_M[v], ecl = QR_ECC_M[v], raw = Math.floor(qrRawModules(v) / 8);
+  const nShort = nb - (raw % nb), shortLen = Math.floor(raw / nb), div = rsDivisor(ecl), blocks = [];
+  for (let i = 0, k = 0; i < nb; i++) {
+    const dat = data.slice(k, k + shortLen - ecl + (i < nShort ? 0 : 1));
+    k += dat.length;
+    const ecc = rsRemainder(dat, div);
+    if (i < nShort) dat.push(0);
+    blocks.push(dat.concat(ecc));
+  }
+  const codewords = [];
+  for (let i = 0; i < blocks[0].length; i++) {
+    for (let j = 0; j < nb; j++) if (i !== shortLen - ecl || j >= nShort) codewords.push(blocks[j][i]);
+  }
+
+  const size = v * 4 + 17, mod = new Uint8Array(size * size), fn = new Uint8Array(size * size);
+  const set = (x, y, dark) => { mod[y * size + x] = dark ? 1 : 0; fn[y * size + x] = 1; };
+  for (let i = 0; i < size; i++) { set(6, i, i % 2 === 0); set(i, 6, i % 2 === 0); }
+  for (const [cx, cy] of [[3, 3], [size - 4, 3], [3, size - 4]]) {
+    for (let dy = -4; dy <= 4; dy++) {
+      for (let dx = -4; dx <= 4; dx++) {
+        const x = cx + dx, y = cy + dy, dist = Math.max(Math.abs(dx), Math.abs(dy));
+        if (x >= 0 && x < size && y >= 0 && y < size) set(x, y, dist !== 2 && dist !== 4);
+      }
+    }
+  }
+  const al = qrAlignment(v);
+  for (let i = 0; i < al.length; i++) {
+    for (let j = 0; j < al.length; j++) {
+      if ((i === 0 && j === 0) || (i === 0 && j === al.length - 1) || (i === al.length - 1 && j === 0)) continue;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) set(al[i] + dx, al[j] + dy, Math.max(Math.abs(dx), Math.abs(dy)) !== 1);
+    }
+  }
+  const drawFormat = (m, mask) => {
+    const f = qrFormatBits(mask), bit = (i) => (f >>> i) & 1;
+    const put2 = (x, y, b) => { m[y * size + x] = b; fn[y * size + x] = 1; };
+    for (let i = 0; i <= 5; i++) put2(8, i, bit(i));
+    put2(8, 7, bit(6)); put2(8, 8, bit(7)); put2(7, 8, bit(8));
+    for (let i = 9; i < 15; i++) put2(14 - i, 8, bit(i));
+    for (let i = 0; i < 8; i++) put2(size - 1 - i, 8, bit(i));
+    for (let i = 8; i < 15; i++) put2(8, size - 15 + i, bit(i));
+    put2(8, size - 8, 1);
+  };
+  drawFormat(mod, 0);
+  if (v >= 7) {
+    let rem = v;
+    for (let i = 0; i < 12; i++) rem = (rem << 1) ^ ((rem >>> 11) * 0x1f25);
+    const vb = (v << 12) | rem;
+    for (let i = 0; i < 18; i++) {
+      const b = (vb >>> i) & 1, a = size - 11 + (i % 3), c = Math.floor(i / 3);
+      set(a, c, b); set(c, a, b);
+    }
+  }
+  let i = 0;
+  for (let right = size - 1; right >= 1; right -= 2) {
+    if (right === 6) right = 5;
+    for (let vert = 0; vert < size; vert++) {
+      for (let j = 0; j < 2; j++) {
+        const x = right - j, upward = ((right + 1) & 2) === 0, y = upward ? size - 1 - vert : vert;
+        if (!fn[y * size + x] && i < codewords.length * 8) { mod[y * size + x] = (codewords[i >>> 3] >>> (7 - (i & 7))) & 1; i++; }
+      }
+    }
+  }
+  let best = null;
+  for (let mask = 0; mask < 8; mask++) {
+    const m = mod.slice();
+    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) if (!fn[y * size + x] && QR_MASKS[mask](x, y)) m[y * size + x] ^= 1;
+    drawFormat(m, mask);
+    const p = qrPenalty(m, size);
+    if (!best || p < best.p) best = { p, mask, m };
+  }
+  return { version: v, size, mask: best.mask, modules: best.m };
+}
+
+function qrSvg(text) {
+  const qr = qrEncode(new TextEncoder().encode(text)), q = 4, n = qr.size + 2 * q;
+  let d = '';
+  for (let y = 0; y < qr.size; y++) for (let x = 0; x < qr.size; x++) if (qr.modules[y * qr.size + x]) d += 'M' + (x + q) + ' ' + (y + q) + 'h1v1h-1z';
+  const NS = 'http://www.w3.org/2000/svg', svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 ' + n + ' ' + n);
+  svg.setAttribute('shape-rendering', 'crispEdges');
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', 'QR code of the code below');
+  const bg = document.createElementNS(NS, 'rect');
+  bg.setAttribute('width', n); bg.setAttribute('height', n); bg.setAttribute('fill', '#fff');
+  const path = document.createElementNS(NS, 'path');
+  path.setAttribute('d', d); path.setAttribute('fill', '#000');
+  svg.append(bg, path);
+  return svg;
+}
+
+/* ===================== CONNECTION CODES ===================== */
+// A browser's offer or answer is about a kilobyte of SDP, but only a few facts in it matter to the other side:
+// the ICE username and password, the DTLS fingerprint and role, and the addresses to try. The code packs just
+// those into bytes, and the other side rebuilds a minimal SDP from them. That keeps the QR codes small.
+const CODE_MAGIC = 0xa0;
+const SETUPS = ['actpass', 'active', 'passive'];
+const CAND_TYPES = ['host', 'srflx', 'prflx', 'relay'];
+const UUID_LOCAL = /^([0-9a-f]{8})-([0-9a-f]{4})-([0-9a-f]{4})-([0-9a-f]{4})-([0-9a-f]{12})\.local$/i;
+
+function parseSdp(sdp) {
+  const line = (re) => { const m = re.exec(sdp); return m ? m[1].trim() : null; };
+  const ufrag = line(/^a=ice-ufrag:(.+)$/m), pwd = line(/^a=ice-pwd:(.+)$/m);
+  const fp = line(/^a=fingerprint:sha-256 (.+)$/mi), setup = line(/^a=setup:(.+)$/m), mid = line(/^a=mid:(.+)$/m);
+  if (!ufrag || !pwd || !fp || !setup || mid === null) throw new Error('the browser made an offer this page doesn\'t understand');
+  const fpBytes = new Uint8Array(fp.split(':').map((h) => parseInt(h, 16)));
+  if (fpBytes.length !== 32 || fpBytes.some((b) => Number.isNaN(b))) throw new Error('unexpected certificate fingerprint');
+  if (SETUPS.indexOf(setup) < 0) throw new Error('unexpected DTLS role ' + setup);
+  const cands = [];
+  for (const m of sdp.matchAll(/^a=candidate:\S+ (\d+) (\S+) \d+ (\S+) (\d+) typ (\S+)/gm)) {
+    if (m[1] !== '1' || m[2].toLowerCase() !== 'udp' || CAND_TYPES.indexOf(m[5]) < 0) continue;
+    if (!cands.some((c) => c.addr === m[3] && c.port === +m[4])) cands.push({ type: m[5], addr: m[3], port: +m[4] });
+  }
+  return { ufrag, pwd, fp: fpBytes, setup, mid, cands };
+}
+
+function parseIPv6(s) {
+  if (!/^[0-9a-f:]+$/i.test(s)) return null;
+  const halves = s.split('::');
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(':') : [], tail = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+  const fill = 8 - head.length - tail.length;
+  if (halves.length === 1 ? fill !== 0 : fill < 1) return null;
+  const groups = head.concat(new Array(halves.length === 2 ? fill : 0).fill('0'), tail);
+  const out = new Uint8Array(16);
+  for (let i = 0; i < 8; i++) {
+    if (!/^[0-9a-f]{1,4}$/i.test(groups[i])) return null;
+    const g = parseInt(groups[i], 16);
+    out[i * 2] = g >> 8; out[i * 2 + 1] = g & 255;
+  }
+  return out;
+}
+
+const b64url = (bytes) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+function unb64url(s) {
+  if (!/^[A-Za-z0-9_-]+$/.test(s)) throw new Error('that isn\'t a code from this page');
+  const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4));
+  return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+}
+
+function encodeCode(kind, info) {
+  const out = [CODE_MAGIC | (kind === 'answer' ? 1 : 0) | (SETUPS.indexOf(info.setup) << 1)];
+  const str = (s) => { const b = new TextEncoder().encode(s); if (b.length > 255) throw new Error('field too long'); out.push(b.length, ...b); };
+  str(info.ufrag); str(info.pwd); out.push(...info.fp); str(info.mid);
+  const cands = info.cands.slice(0, 15);
+  out.push(cands.length);
+  for (const c of cands) {
+    const t = CAND_TYPES.indexOf(c.type) << 2, v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(c.addr);
+    const v6 = c.addr.indexOf(':') >= 0 && parseIPv6(c.addr), uuid = UUID_LOCAL.exec(c.addr);
+    if (v4 && v4.slice(1).every((n) => +n < 256)) out.push(t | 0, ...v4.slice(1).map(Number));
+    else if (v6) out.push(t | 1, ...v6);
+    else if (uuid) { out.push(t | 2); const hex = uuid.slice(1).join(''); for (let i = 0; i < 32; i += 2) out.push(parseInt(hex.slice(i, i + 2), 16)); }
+    else { out.push(t | 3); str(c.addr); }
+    out.push(c.port >> 8, c.port & 255);
+  }
+  return b64url(out);
+}
+
+// Accepts the code itself, or a link with the code after the #.
+function decodeCode(text) {
+  let s = String(text).replace(/\s+/g, '');
+  const hash = s.lastIndexOf('#');
+  if (hash >= 0) s = s.slice(hash + 1);
+  s = s.replace(/^[a-z]=/, '');
+  if (!s) throw new Error('the code is empty');
+  const b = unb64url(s);
+  let i = 0;
+  const need = (n) => { if (i + n > b.length) throw new Error('the code is cut short. Copy all of it'); };
+  const byte = () => { need(1); return b[i++]; };
+  const bytes = (n) => { need(n); const r = b.slice(i, i + n); i += n; return r; };
+  const str = () => new TextDecoder().decode(bytes(byte()));
+  const head = byte();
+  if ((head & 0xf8) !== CODE_MAGIC || ((head >> 1) & 3) > 2) throw new Error('that isn\'t a code from this page');
+  const info = { kind: head & 1 ? 'answer' : 'offer', setup: SETUPS[(head >> 1) & 3], ufrag: str(), pwd: str(), fp: bytes(32), mid: str(), cands: [] };
+  const n = byte();
+  for (let k = 0; k < n; k++) {
+    const t = byte(), type = CAND_TYPES[(t >> 2) & 3];
+    let addr;
+    switch (t & 3) {
+      case 0: addr = Array.from(bytes(4)).join('.'); break;
+      case 1: { const g = bytes(16); addr = Array.from({ length: 8 }, (_, j) => ((g[j * 2] << 8) | g[j * 2 + 1]).toString(16)).join(':'); break; }
+      case 2: { const h = toHex(bytes(16)); addr = h.slice(0, 8) + '-' + h.slice(8, 12) + '-' + h.slice(12, 16) + '-' + h.slice(16, 20) + '-' + h.slice(20) + '.local'; break; }
+      default: addr = str();
+    }
+    const port = (byte() << 8) | byte();
+    info.cands.push({ type, addr, port });
+  }
+  if (i !== b.length) throw new Error('that isn\'t a code from this page');
+  return info;
+}
+
+const TYPE_PREF = { host: 126, prflx: 110, srflx: 100, relay: 0 };
+function buildSdp(info) {
+  const fp = Array.from(info.fp, (x) => x.toString(16).padStart(2, '0').toUpperCase()).join(':');
+  const lines = [
+    'v=0', 'o=- ' + Math.floor(Math.random() * 1e15) + ' 2 IN IP4 127.0.0.1', 's=-', 't=0 0',
+    'a=group:BUNDLE ' + info.mid, 'a=msid-semantic: WMS',
+    'm=application 9 UDP/DTLS/SCTP webrtc-datachannel', 'c=IN IP4 0.0.0.0',
+    'a=ice-ufrag:' + info.ufrag, 'a=ice-pwd:' + info.pwd, 'a=fingerprint:sha-256 ' + fp,
+    'a=setup:' + info.setup, 'a=mid:' + info.mid, 'a=sctp-port:5000', 'a=max-message-size:262144',
+  ];
+  info.cands.forEach((c, k) => {
+    const prio = TYPE_PREF[c.type] * 16777216 + (65535 - k) * 256 + 255;
+    lines.push('a=candidate:' + (k + 1) + ' 1 udp ' + prio + ' ' + c.addr + ' ' + c.port + ' typ ' + c.type);
+  });
+  lines.push('a=end-of-candidates');
+  return lines.join('\r\n') + '\r\n';
+}
+
+// A short number both sides can compare, from both certificate fingerprints. Someone who swapped a code for their
+// own would have a different fingerprint on each side, so the numbers wouldn't match.
+function checkNumber(offerFp, answerFp) {
+  const both = new Uint8Array(64);
+  both.set(offerFp); both.set(answerFp, 32);
+  const h = new Sha256().update(both).digest();
+  const n = ((h[0] << 16) | (h[1] << 8) | h[2]) % 1000000;
+  const s = String(n).padStart(6, '0');
+  return s.slice(0, 3) + ' ' + s.slice(3);
+}
+
+/* ===================== TRANSFER PROTOCOL ===================== */
+// Over one ordered, reliable data channel: a JSON "file" message, the file's bytes in binary chunks, then a JSON
+// "end" message with its SHA-256. The receiver checks the hash and answers with an "ack".
+const CHUNK = 16 * 1024, HIGH_WATER = 4 * 1024 * 1024, LOW_WATER = 1024 * 1024;
+
+function createEndpoint(channel, hooks) {
+  let nextId = 0, queue = Promise.resolve(), incoming = null;
+  channel.binaryType = 'arraybuffer';
+  channel.bufferedAmountLowThreshold = LOW_WATER;
+  const drained = () => new Promise((resolve) => {
+    const done = () => { channel.removeEventListener('bufferedamountlow', done); channel.removeEventListener('close', done); resolve(); };
+    channel.addEventListener('bufferedamountlow', done);
+    channel.addEventListener('close', done);
+  });
+  const open = () => channel.readyState === 'open';
+
+  channel.addEventListener('message', (e) => {
+    if (typeof e.data !== 'string') {
+      if (!incoming) return;
+      const chunk = new Uint8Array(e.data);
+      incoming.parts.push(chunk); incoming.hash.update(chunk); incoming.got += chunk.length;
+      hooks.progress('in', incoming.id, incoming.got);
+      return;
+    }
+    let msg;
+    try { msg = JSON.parse(e.data); } catch { return; }
+    if (msg.t === 'file') {
+      incoming = { id: msg.id, meta: { name: String(msg.name), size: +msg.size || 0, type: String(msg.type || '') }, parts: [], got: 0, hash: new Sha256() };
+      hooks.started('in', msg.id, incoming.meta);
+    } else if (msg.t === 'end' && incoming && incoming.id === msg.id) {
+      const sha = toHex(incoming.hash.digest()), ok = sha === msg.sha && incoming.got === incoming.meta.size;
+      const blob = new Blob(incoming.parts, { type: incoming.meta.type });
+      hooks.finished('in', msg.id, { ok, sha, blob, name: incoming.meta.name });
+      incoming = null;
+      if (open()) channel.send(JSON.stringify({ t: 'ack', id: msg.id, ok }));
+    } else if (msg.t === 'ack') {
+      hooks.acked(msg.id, !!msg.ok);
+    }
+  });
+  channel.addEventListener('close', () => {
+    if (incoming) { hooks.finished('in', incoming.id, { ok: false, cut: true, name: incoming.meta.name }); incoming = null; }
+    hooks.closed();
+  });
+
+  async function sendNow(file, id) {
+    hooks.started('out', id, { name: file.name, size: file.size, type: file.type });
+    const hash = new Sha256();
+    channel.send(JSON.stringify({ t: 'file', id, name: file.name, size: file.size, type: file.type }));
+    for (let at = 0; at < file.size; at += CHUNK) {
+      const chunk = new Uint8Array(await file.slice(at, at + CHUNK).arrayBuffer());
+      hash.update(chunk);
+      while (open() && channel.bufferedAmount > HIGH_WATER) await drained();
+      if (!open()) { hooks.finished('out', id, { ok: false, cut: true }); return; }
+      channel.send(chunk);
+      hooks.progress('out', id, at + chunk.length);
+    }
+    const sha = toHex(hash.digest());
+    channel.send(JSON.stringify({ t: 'end', id, sha }));
+    hooks.finished('out', id, { ok: true, sha });
+  }
+  return {
+    send(file) {
+      const id = ++nextId;
+      queue = queue.then(() => (open() ? sendNow(file, id) : hooks.finished('out', id, { ok: false, cut: true }))).catch((err) => {
+        hooks.finished('out', id, { ok: false, error: String(err && err.message || err) });
+      });
+      return queue;
+    },
+  };
+}
+
+/* ===================== WEBRTC ===================== */
+function gathered(pc, ms) {
+  return new Promise((resolve) => {
+    if (pc.iceGatheringState === 'complete') return resolve();
+    const t = setTimeout(resolve, ms);
+    pc.addEventListener('icegatheringstatechange', () => { if (pc.iceGatheringState === 'complete') { clearTimeout(t); resolve(); } });
+  });
+}
+
+async function makeOffer() {
+  const pc = new RTCPeerConnection({ iceServers: [] });
+  const channel = pc.createDataChannel('files', { ordered: true });
+  await pc.setLocalDescription(await pc.createOffer());
+  await gathered(pc, 4000);
+  const info = parseSdp(pc.localDescription.sdp);
+  return { pc, channel, info, code: encodeCode('offer', info) };
+}
+
+async function makeAnswer(offerInfo) {
+  const pc = new RTCPeerConnection({ iceServers: [] });
+  const channel = new Promise((resolve) => pc.addEventListener('datachannel', (e) => resolve(e.channel), { once: true }));
+  await pc.setRemoteDescription({ type: 'offer', sdp: buildSdp(offerInfo) });
+  await pc.setLocalDescription(await pc.createAnswer());
+  await gathered(pc, 4000);
+  const info = parseSdp(pc.localDescription.sdp);
+  return { pc, channel, info, code: encodeCode('answer', info) };
+}
+
+/* ===================== UI ===================== */
+let session = null; // { pc, local fingerprint, remote fingerprint, role }
+const hosted = /^https?:$/.test(location.protocol);
+
+function fmtBytes(n) {
+  if (n < 1024) return n + ' B';
+  const u = ['KB', 'MB', 'GB', 'TB'];
+  let i = -1;
+  do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1);
+  return n.toFixed(n < 10 ? 1 : 0) + ' ' + u[i];
+}
+
+function setStatus(text) { $('status').textContent = text || ''; }
+
+function showCode(prefix, code, link) {
+  const text = link || code;
+  $(prefix + '-qr').replaceChildren(qrSvg(text));
+  $(prefix + '-code').value = text;
+  $(prefix + '-hint').textContent = link
+    ? 'Scan it with the other device\'s camera, or copy or share the link and open it there.'
+    : 'Scan it on the other device, or copy the text and paste it there.';
+  if (navigator.share) $(prefix + '-share').hidden = false;
+}
+
+async function copyFrom(prefix) {
+  const ta = $(prefix + '-code'), btn = $(prefix + '-copy');
+  try {
+    await navigator.clipboard.writeText(ta.value);
+    btn.textContent = 'Copied';
+  } catch {
+    ta.focus(); ta.select();
+    btn.textContent = 'Selected. Copy it now';
+  }
+  setTimeout(() => { btn.textContent = 'Copy'; }, 2500);
+}
+
+function share(prefix) {
+  const text = $(prefix + '-code').value;
+  navigator.share(/^https?:/.test(text) ? { url: text } : { text }).catch(() => {});
+}
+
+function reset() {
+  if (session && session.pc) session.pc.close();
+  session = null;
+  stopScan();
+  for (const id of ['offer-step', 'join-step', 'answer-out', 'connected', 'reset']) $(id).hidden = true;
+  $('choose').hidden = false;
+  for (const id of ['answer-in', 'offer-in', 'offer-code', 'answer-code']) { $(id).value = ''; $(id).disabled = false; }
+  $('answer-error').textContent = ''; $('offer-error').textContent = '';
+  $('transfers').replaceChildren();
+  setStatus('');
+}
+
+function watchConnection(pc) {
+  let shown = false;
+  const timer = setTimeout(() => {
+    if (!shown) setStatus('Still not connected. Both devices must be on the same network, and the network must let devices reach each other. Some guest and public Wi-Fi networks don\'t.');
+  }, 15000);
+  pc.addEventListener('iceconnectionstatechange', () => {
+    if (pc.iceConnectionState === 'failed') { clearTimeout(timer); setStatus('The connection failed. The devices couldn\'t reach each other over the network. Check they are on the same network, then start over.'); }
+    if (pc.iceConnectionState === 'disconnected') setStatus('The connection dropped. It may come back on its own.');
+  });
+  return () => { shown = true; clearTimeout(timer); };
+}
+
+async function onStart() {
+  reset();
+  $('choose').hidden = true; $('reset').hidden = false; $('offer-step').hidden = false;
+  setStatus('Making a code...');
+  try {
+    const o = await makeOffer();
+    session = { pc: o.pc, localFp: o.info.fp, role: 'offer' };
+    showCode('offer', o.code, hosted ? location.origin + location.pathname + '#o=' + o.code : null);
+    setStatus('');
+    o.channel.addEventListener('open', () => connected(o.channel), { once: true });
+  } catch (err) {
+    setStatus('Couldn\'t start a connection: ' + (err && err.message || err) + '. This browser may not support WebRTC.');
+  }
+}
+
+async function onAnswerInput() {
+  const text = $('answer-in').value;
+  $('answer-error').textContent = '';
+  if (!text.trim() || !session || session.role !== 'offer') return;
+  let info;
+  try { info = decodeCode(text); } catch (err) { $('answer-error').textContent = 'That code doesn\'t work: ' + err.message + '.'; return; }
+  if (info.kind !== 'answer') { $('answer-error').textContent = 'That is this device\'s own kind of code. Enter the reply that the other device shows.'; return; }
+  $('answer-in').disabled = true;
+  session.remoteFp = info.fp;
+  const settled = watchConnection(session.pc);
+  session.settled = settled;
+  setStatus('Connecting...');
+  try {
+    await session.pc.setRemoteDescription({ type: 'answer', sdp: buildSdp(info) });
+  } catch (err) {
+    settled();
+    $('answer-in').disabled = false;
+    $('answer-error').textContent = 'That reply doesn\'t fit this connection: ' + (err && err.message || err) + '. Start over on both devices.';
+    setStatus('');
+  }
+}
+
+function onJoin() {
+  reset();
+  $('choose').hidden = true; $('reset').hidden = false; $('join-step').hidden = false;
+  $('offer-in').focus();
+}
+
+async function onOfferInput() {
+  const text = $('offer-in').value;
+  $('offer-error').textContent = '';
+  if (!text.trim() || session) return;
+  let info;
+  try { info = decodeCode(text); } catch (err) { $('offer-error').textContent = 'That code doesn\'t work: ' + err.message + '.'; return; }
+  if (info.kind !== 'offer') { $('offer-error').textContent = 'That is a reply code. Enter the code from the device that pressed "Start a connection".'; return; }
+  $('offer-in').disabled = true;
+  session = { role: 'answer', remoteFp: info.fp };
+  setStatus('Making a reply...');
+  try {
+    const a = await makeAnswer(info);
+    if (!session || session.role !== 'answer') { a.pc.close(); return; }
+    session.pc = a.pc; session.localFp = a.info.fp;
+    showCode('answer', a.code, null);
+    $('answer-out').hidden = false;
+    session.settled = watchConnection(a.pc);
+    setStatus('Waiting for the other device to connect...');
+    const channel = await a.channel;
+    if (channel.readyState === 'open') connected(channel);
+    else channel.addEventListener('open', () => connected(channel), { once: true });
+  } catch (err) {
+    session = null;
+    $('offer-in').disabled = false;
+    $('offer-error').textContent = 'Couldn\'t answer that code: ' + (err && err.message || err) + '.';
+    setStatus('');
+  }
+}
+
+function connected(channel) {
+  if (!session) return;
+  if (session.settled) session.settled();
+  $('offer-step').hidden = true; $('join-step').hidden = true; $('connected').hidden = false;
+  const [offerFp, answerFp] = session.role === 'offer' ? [session.localFp, session.remoteFp] : [session.remoteFp, session.localFp];
+  $('check').textContent = checkNumber(offerFp, answerFp);
+  setStatus('');
+  const rows = new Map();
+  const row = (dir, id) => rows.get(dir + id);
+  session.endpoint = createEndpoint(channel, {
+    started(dir, id, meta) {
+      const li = document.createElement('li');
+      const name = document.createElement('div'); name.className = 'name'; name.textContent = (dir === 'in' ? 'Receiving ' : 'Sending ') + meta.name;
+      const bar = document.createElement('progress'); bar.max = Math.max(meta.size, 1); bar.value = 0;
+      const info = document.createElement('div'); info.className = 'meta'; info.textContent = fmtBytes(0) + ' of ' + fmtBytes(meta.size);
+      li.append(name, bar, info);
+      $('transfers').prepend(li);
+      rows.set(dir + id, { li, name, bar, info, meta });
+    },
+    progress(dir, id, bytes) {
+      const r = row(dir, id); if (!r) return;
+      r.bar.value = bytes; r.info.textContent = fmtBytes(bytes) + ' of ' + fmtBytes(r.meta.size);
+    },
+    finished(dir, id, res) {
+      const r = row(dir, id); if (!r) return;
+      r.bar.remove();
+      if (dir === 'in') {
+        r.name.textContent = r.meta.name;
+        if (res.ok) {
+          r.info.className = 'meta ok';
+          r.info.textContent = 'Received ' + fmtBytes(r.meta.size) + ', SHA-256 matches. ';
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(res.blob); a.download = r.meta.name || 'file'; a.textContent = 'Save';
+          r.info.append(a);
+        } else {
+          r.info.className = 'meta bad';
+          r.info.textContent = res.cut ? 'Cut off when the connection closed.' : 'Arrived damaged: the SHA-256 doesn\'t match, so it wasn\'t kept.';
+        }
+      } else {
+        r.name.textContent = r.meta.name;
+        r.info.className = res.ok ? 'meta' : 'meta bad';
+        r.info.textContent = res.ok ? 'Sent ' + fmtBytes(r.meta.size) + '. Waiting for the other device to check it...'
+          : res.cut ? 'Not sent: the connection closed.' : 'Not sent: ' + res.error;
+      }
+    },
+    acked(id, ok) {
+      const r = row('out', id); if (!r) return;
+      r.info.className = ok ? 'meta ok' : 'meta bad';
+      r.info.textContent = ok ? 'Delivered ' + fmtBytes(r.meta.size) + ', and the other device confirmed its SHA-256.' : 'The other device got a damaged copy. Try sending it again.';
+    },
+    closed() {
+      setStatus('The connection closed. Start over to connect again.');
+      $('drop').hidden = true;
+    },
+  });
+  $('drop').hidden = false;
+}
+
+function sendFiles(list) {
+  if (!session || !session.endpoint) return;
+  for (const f of list) session.endpoint.send(f);
+}
+
+/* ===================== QR SCANNING (where BarcodeDetector exists) ===================== */
+let scan = null;
+async function canScan() {
+  if (!('BarcodeDetector' in window) || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return false;
+  try { return (await BarcodeDetector.getSupportedFormats()).indexOf('qr_code') >= 0; } catch { return false; }
+}
+async function startScan(target, onValue) {
+  stopScan();
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+  } catch (err) {
+    target.textContent = 'Couldn\'t use the camera: ' + (err && err.message || err) + '. Paste the code instead.';
+    return;
+  }
+  const video = $('scanner-video');
+  video.srcObject = stream;
+  $('scanner').hidden = false;
+  await video.play().catch(() => {});
+  const detector = new BarcodeDetector({ formats: ['qr_code'] });
+  scan = { stream, timer: 0 };
+  const tick = async () => {
+    if (!scan) return;
+    try {
+      const codes = await detector.detect(video);
+      if (codes.length && scan) { const v = codes[0].rawValue; stopScan(); onValue(v); return; }
+    } catch { /* the video may not have a frame yet */ }
+    if (scan) scan.timer = setTimeout(tick, 150);
+  };
+  tick();
+}
+function stopScan() {
+  if (!scan) return;
+  clearTimeout(scan.timer);
+  scan.stream.getTracks().forEach((t) => t.stop());
+  scan = null;
+  $('scanner-video').srcObject = null;
+  $('scanner').hidden = true;
+}
+
+function boot() {
+  $('start').addEventListener('click', onStart);
+  $('join').addEventListener('click', onJoin);
+  $('reset').addEventListener('click', reset);
+  $('offer-copy').addEventListener('click', () => copyFrom('offer'));
+  $('answer-copy').addEventListener('click', () => copyFrom('answer'));
+  $('offer-share').addEventListener('click', () => share('offer'));
+  $('answer-share').addEventListener('click', () => share('answer'));
+  $('answer-in').addEventListener('input', onAnswerInput);
+  $('offer-in').addEventListener('input', onOfferInput);
+  $('scanner-cancel').addEventListener('click', stopScan);
+  $('offer-scan').addEventListener('click', () => startScan($('offer-error'), (v) => { $('offer-in').value = v; onOfferInput(); }));
+  $('answer-scan').addEventListener('click', () => startScan($('answer-error'), (v) => { $('answer-in').value = v; onAnswerInput(); }));
+  canScan().then((yes) => { $('offer-scan').hidden = !yes; $('answer-scan').hidden = !yes; });
+
+  const drop = $('drop');
+  $('files').addEventListener('change', (e) => { sendFiles(e.target.files); e.target.value = ''; });
+  drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('over'); sendFiles(e.dataTransfer.files); });
+
+  if (typeof RTCPeerConnection === 'undefined') {
+    $('start').disabled = true; $('join').disabled = true;
+    setStatus('This browser doesn\'t support WebRTC, so it can\'t connect to another device.');
+    return;
+  }
+  // A link from the other device's QR code or Share button: answer it straight away.
+  if (/^#o=/.test(location.hash)) {
+    const code = location.hash.slice(3);
+    history.replaceState(null, '', location.pathname + location.search);
+    onJoin();
+    $('offer-in').value = code;
+    onOfferInput();
+  }
+}
+
+/* ===================== SELF TEST (runs only with #test) ===================== */
+const SAMPLE_CHROME_OFFER = [
+  'v=0', 'o=- 2233897891433522567 2 IN IP4 127.0.0.1', 's=-', 't=0 0', 'a=group:BUNDLE 0', 'a=extmap-allow-mixed', 'a=msid-semantic: WMS',
+  'm=application 9 UDP/DTLS/SCTP webrtc-datachannel', 'c=IN IP4 0.0.0.0',
+  'a=candidate:445328094 1 udp 2113937151 b08c19d7-dbbf-43d5-8611-a78b7ac054bd.local 46536 typ host generation 0 network-cost 999',
+  'a=ice-ufrag:ppjR', 'a=ice-pwd:8ue6E7FLGpUf52AfoBTlk59x', 'a=ice-options:trickle',
+  'a=fingerprint:sha-256 65:B3:F4:8C:15:F3:47:DA:8C:54:53:C8:A7:5C:2C:FC:1C:CB:07:17:0E:A9:F9:5A:F0:33:49:78:45:96:C6:F8',
+  'a=setup:actpass', 'a=mid:0', 'a=sctp-port:5000', 'a=max-message-size:262144', '',
+].join('\r\n');
+const SAMPLE_FIREFOX_ANSWER = [
+  'v=0', 'o=mozilla...THIS_IS_SDPARTA-99.0 1834865451721498462 0 IN IP4 0.0.0.0', 's=-', 't=0 0', 'a=sendrecv',
+  'a=fingerprint:sha-256 2B:E4:BE:6C:BD:D7:31:86:B9:F7:3A:64:41:BE:B2:B5:0C:1D:BD:61:AA:96:BA:D0:D7:B5:5F:31:47:48:49:C3',
+  'a=group:BUNDLE 0', 'a=ice-options:trickle', 'a=msid-semantic:WMS *', 'm=application 9 UDP/DTLS/SCTP webrtc-datachannel', 'c=IN IP4 0.0.0.0',
+  'a=candidate:0 1 UDP 2122252543 a2811097-66f8-4007-975a-8492e61066dd.local 58823 typ host',
+  'a=candidate:1 1 TCP 2105524479 a2811097-66f8-4007-975a-8492e61066dd.local 9 typ host tcptype active',
+  'a=candidate:2 1 UDP 2122187007 192.168.1.20 58824 typ host',
+  'a=candidate:3 1 UDP 2122252543 fe80::1c2:3ff:fe44:5566 58825 typ host',
+  'a=candidate:4 2 UDP 2122252542 192.168.1.20 58826 typ host',
+  'a=sendrecv', 'a=end-of-candidates', 'a=ice-pwd:de9dbcc1c92d34916003ae50edfad1bd', 'a=ice-ufrag:13ddf26b', 'a=mid:0',
+  'a=setup:active', 'a=sctp-port:5000', 'a=max-message-size:1073741823', '',
+].join('\r\n');
+
+async function selfTest() {
+  const fails = [];
+  let n = 0;
+  const ok = (cond, name, detail) => { n++; if (!cond) fails.push(name + (detail !== undefined ? ' — got ' + detail : '')); };
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const canon = (i) => JSON.stringify([i.ufrag, i.pwd, Array.from(i.fp), i.setup, i.mid, i.cands]);
+  const enc = (s) => new TextEncoder().encode(s);
+  const randomBytes = (len) => { const b = new Uint8Array(len); for (let i = 0; i < len; i += 65536) crypto.getRandomValues(b.subarray(i, Math.min(len, i + 65536))); return b; };
+  try {
+    // SHA-256 against the FIPS 180-2 examples, fed in uneven pieces.
+    ok(sha256Hex(enc('')) === 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', 'SHA-256 of the empty string');
+    ok(sha256Hex(enc('abc')) === 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad', 'SHA-256 of "abc"');
+    ok(sha256Hex(enc('abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq')) === '248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1', 'SHA-256 of the two-block example');
+    const million = new Uint8Array(1000000).fill(97), h = new Sha256();
+    for (let at = 0, step = 1; at < million.length; at += step, step = step * 7 % 9973 + 1) h.update(million.subarray(at, at + step));
+    ok(toHex(h.digest()) === 'cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0', 'SHA-256 of a million "a"s, fed in uneven pieces');
+    if (crypto.subtle) {
+      for (const len of [55, 56, 63, 64, 65, 100000]) {
+        const data = randomBytes(len);
+        const want = toHex(new Uint8Array(await crypto.subtle.digest('SHA-256', data)));
+        ok(sha256Hex(data) === want, 'SHA-256 matches crypto.subtle for ' + len + ' random bytes');
+      }
+    }
+
+    // Connection codes.
+    const co = parseSdp(SAMPLE_CHROME_OFFER);
+    ok(co.ufrag === 'ppjR' && co.pwd === '8ue6E7FLGpUf52AfoBTlk59x' && co.setup === 'actpass' && co.mid === '0', 'reads ICE credentials, role and mid from a Chrome offer', canon(co));
+    ok(co.fp.length === 32 && co.fp[0] === 0x65 && co.fp[31] === 0xf8, 'reads the fingerprint from a Chrome offer');
+    ok(same(co.cands, [{ type: 'host', addr: 'b08c19d7-dbbf-43d5-8611-a78b7ac054bd.local', port: 46536 }]), 'reads the mDNS candidate', JSON.stringify(co.cands));
+    const coCode = encodeCode('offer', co);
+    ok(coCode.length < 120, 'a Chrome offer packs into a short code', coCode.length);
+    const coBack = decodeCode(coCode);
+    ok(coBack.kind === 'offer' && canon(coBack) === canon(co), 'a Chrome offer survives the code round trip', canon(coBack));
+    ok(canon(decodeCode('https://example.test/p2p-transfer.html#o=' + coCode)) === canon(co), 'a link with the code after #o= decodes');
+    ok(canon(decodeCode('  ' + coCode.slice(0, 40) + '\n' + coCode.slice(40) + ' ')) === canon(co), 'whitespace and line breaks in a pasted code are ignored');
+
+    const fa = parseSdp(SAMPLE_FIREFOX_ANSWER);
+    ok(fa.setup === 'active' && fa.ufrag === '13ddf26b', 'reads a Firefox answer, with its attributes after the candidates');
+    ok(same(fa.cands.map((c) => c.addr + ' ' + c.port), ['a2811097-66f8-4007-975a-8492e61066dd.local 58823', '192.168.1.20 58824', 'fe80::1c2:3ff:fe44:5566 58825']),
+      'keeps UDP candidates for component 1 only', JSON.stringify(fa.cands));
+    const faBack = decodeCode(encodeCode('answer', fa));
+    ok(faBack.kind === 'answer' && faBack.setup === 'active', 'an answer keeps its kind and DTLS role');
+    ok(same(faBack.cands.map((c) => c.addr), ['a2811097-66f8-4007-975a-8492e61066dd.local', '192.168.1.20', 'fe80:0:0:0:1c2:3ff:fe44:5566']), 'IPv4, IPv6 and mDNS addresses survive the round trip', JSON.stringify(faBack.cands));
+    const odd = { ...co, cands: [{ type: 'srflx', addr: 'host.example', port: 1 }, { type: 'host', addr: '::1', port: 65535 }, { type: 'relay', addr: '1::', port: 2 }] };
+    ok(same(decodeCode(encodeCode('offer', odd)).cands, [{ type: 'srflx', addr: 'host.example', port: 1 }, { type: 'host', addr: '0:0:0:0:0:0:0:1', port: 65535 }, { type: 'relay', addr: '1:0:0:0:0:0:0:0', port: 2 }]),
+      'hostnames, :: shorthand and candidate types survive the round trip');
+    ok(canon(parseSdp(buildSdp(fa))) === canon(fa), 'the SDP rebuilt from a code reads back the same');
+    for (const [bad, why] of [['', 'empty'], ['hello world!', 'not base64'], ['AAAA', 'wrong magic'], [coCode.slice(0, 30), 'cut short'], [coCode + 'AA', 'trailing bytes']]) {
+      let threw = false;
+      try { decodeCode(bad); } catch { threw = true; }
+      ok(threw, 'rejects a bad code (' + why + ')');
+    }
+    const x = checkNumber(co.fp, fa.fp);
+    ok(/^\d{3} \d{3}$/.test(x) && x === checkNumber(co.fp, fa.fp) && x !== checkNumber(fa.fp, co.fp), 'the check number is six digits and depends on which side is which', x);
+
+    // QR encoder: sizes, and structure a reader relies on. Decoding was checked with an independent reader.
+    ok(qrEncode(enc('')).version === 1 && qrEncode(enc('a'.repeat(14))).version === 1 && qrEncode(enc('a'.repeat(15))).version === 2, 'QR version 1 holds 14 bytes at level M');
+    ok(qrEncode(enc('a'.repeat(213))).version === 10 && qrEncode(enc('a'.repeat(2331))).version === 40, 'QR versions are chosen by capacity', qrEncode(enc('a'.repeat(213))).version);
+    let tooBig = false;
+    try { qrEncode(enc('a'.repeat(2332))); } catch { tooBig = true; }
+    ok(tooBig, 'refuses data too long for any QR code');
+    ok(qrDataCodewords(1) === 16 && qrDataCodewords(10) === 216 && qrDataCodewords(40) === 2334, 'QR data capacities match the standard at level M');
+    ok(same(qrAlignment(7), [6, 22, 38]) && same(qrAlignment(32), [6, 34, 60, 86, 112, 138]), 'QR alignment pattern positions match the standard');
+    const q = qrEncode(enc('https://porta-pages.pages.dev/p2p-transfer.html#o=' + coCode));
+    const finder = (cx, cy) => [0, 1, 2, 3, 4, 5, 6].every((d) => q.modules[cy * q.size + cx + d] === (d === 1 || d === 5 ? 0 : 1));
+    ok(finder(0, 3) && finder(q.size - 7, 3) && finder(0, q.size - 4), 'QR finder patterns are in the corners');
+    ok(q.version <= 10, 'an offer link fits in a small QR code', q.version);
+    ok(sha256Hex(qrEncode(enc('porta-pages')).modules) === QR_FIXTURE, 'QR output for a fixed input is unchanged', sha256Hex(qrEncode(enc('porta-pages')).modules));
+
+    // Transfer protocol over a pair of fake channels.
+    const files = [new File([], 'empty.txt'), new File([enc('x')], 'one.txt', { type: 'text/plain' }), new File([randomBytes(100000)], 'random.bin')];
+    const got = await transferOverFakes(files, false);
+    ok(got.in.length === 3 && got.in.every((r) => r.ok), 'three files arrive and pass the SHA-256 check', JSON.stringify(got.in.map((r) => r.ok)));
+    for (let k = 0; k < files.length; k++) {
+      const sent = new Uint8Array(await files[k].arrayBuffer()), recv = got.in[k] && got.in[k].blob ? new Uint8Array(await got.in[k].blob.arrayBuffer()) : null;
+      ok(recv && recv.length === sent.length && recv.every((b, j) => b === sent[j]) && got.in[k].name === files[k].name, files[k].name + ' arrives byte for byte with its name');
+    }
+    ok(got.acks.length === 3 && got.acks.every((a) => a), 'the sender hears that each file checked out', JSON.stringify(got.acks));
+    const bad = await transferOverFakes([new File([randomBytes(40000)], 'damaged.bin')], true);
+    ok(bad.in.length === 1 && !bad.in[0].ok && bad.acks.length === 1 && !bad.acks[0], 'a file damaged on the way fails the check, and the sender hears so');
+
+    // A real offer and answer, through codes and back. This doesn't wait for a connection: test machines often can't resolve mDNS names.
+    if (typeof RTCPeerConnection !== 'undefined') {
+      const o = await makeOffer();
+      ok(o.code.length < 160, 'this browser\'s offer packs into a short code', o.code.length);
+      const a = await makeAnswer(decodeCode(o.code));
+      ok(decodeCode(a.code).kind === 'answer', 'this browser answers an SDP rebuilt from an offer code');
+      let accepted = true;
+      try { await o.pc.setRemoteDescription({ type: 'answer', sdp: buildSdp(decodeCode(a.code)) }); } catch (err) { accepted = String(err); }
+      ok(accepted === true, 'this browser accepts an SDP rebuilt from an answer code', accepted);
+      o.pc.close(); a.pc.close();
+    }
+  } catch (e) { fails.push('exception during self-test: ' + (e && e.stack || e)); }
+  if (fails.length) { console.error('[p2p-transfer] self-test: ' + fails.length + ' of ' + n + ' checks FAILED'); fails.forEach((f) => console.error('  ✗ ' + f)); }
+  else console.info('[p2p-transfer] self-test: all ' + n + ' checks passed');
+  return { total: n, failures: fails };
+}
+const QR_FIXTURE = 'f4c795e1ac7b4a603a762c2a1bc8aa9563cb83cde49a7f138089f4e576c3f37d';
+
+function fakeChannelPair(corrupt) {
+  const make = () => ({
+    readyState: 'open', bufferedAmount: 0, bufferedAmountLowThreshold: 0, binaryType: 'blob', handlers: {},
+    addEventListener(type, f) { (this.handlers[type] = this.handlers[type] || []).push(f); },
+    removeEventListener(type, f) { this.handlers[type] = (this.handlers[type] || []).filter((g) => g !== f); },
+    dispatch(type, e) { (this.handlers[type] || []).slice().forEach((f) => f(e)); },
+    send(data) {
+      let copy = data;
+      if (typeof data !== 'string') { copy = data.slice().buffer; if (corrupt && this.flip !== false) { new Uint8Array(copy)[0] ^= 1; this.flip = false; } }
+      setTimeout(() => this.peer.dispatch('message', { data: copy }), 0);
+    },
+  });
+  const a = make(), b = make();
+  a.peer = b; b.peer = a;
+  return [a, b];
+}
+
+function transferOverFakes(files, corrupt) {
+  return new Promise((resolve) => {
+    const [ca, cb] = fakeChannelPair(corrupt), result = { in: [], acks: [] };
+    const quiet = { started() {}, progress() {}, finished() {}, acked() {}, closed() {} };
+    const sender = createEndpoint(ca, { ...quiet, acked(id, good) { result.acks.push(good); if (result.acks.length === files.length) resolve(result); } });
+    createEndpoint(cb, { ...quiet, finished(dir, id, res) { if (dir === 'in') result.in.push(res); } });
+    files.forEach((f) => sender.send(f));
+    setTimeout(() => resolve(result), 5000);
+  });
+}
+
+// Test contract shared with tools/: set window.portaTestResult before load, then show the result on the page.
+function runTestsIfRequested() {
+  if (location.hash !== '#test') return;
+  const show = (r) => {
+    let el = $('test-report');
+    if (!el) { el = document.createElement('div'); el.id = 'test-report'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
+    el.className = r.failures.length ? 'fail' : 'pass';
+    el.textContent = r.failures.length
+      ? 'Self-test: ' + r.failures.length + ' of ' + r.total + ' checks FAILED\n' + r.failures.map((f) => '✗ ' + f).join('\n')
+      : 'Self-test: all ' + r.total + ' checks passed';
+    return r;
+  };
+  window.portaTestResult = selfTest().then(show);
+}
+
+boot();
+runTestsIfRequested();
+window.addEventListener('hashchange', runTestsIfRequested);
+</script>
+</body>
+</html>
