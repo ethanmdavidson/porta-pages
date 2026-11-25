@@ -1,0 +1,1028 @@
+<!DOCTYPE html>
+<!--
+  Sealed letter
+
+  Write a message and seal it into a new, self-contained HTML file that
+  asks for a passphrase and decrypts itself in the browser. Send the file
+  by email, keep it on a USB stick, or put it in a shared folder: without
+  the passphrase it's just ciphertext. You can also split the key into
+  share cards, so that any K of N people you trust can open the letter
+  together, as an "if something happens to me" kit. Print the cards; each
+  has a QR code and a code to type in.
+
+  Choose who can open the letter: anyone with the passphrase, anyone with
+  K of the N share cards, or both. Press Seal, then save the letter (and
+  print the cards). Before it offers the file, this page opens the letter
+  it just made, with the passphrase and with shares, to check that it
+  works. Nothing you type is saved or sent anywhere.
+
+  How it's locked: the message is encrypted with AES-256-GCM under a
+  random key. For the passphrase, that key is itself encrypted under a key
+  derived from the passphrase with PBKDF2-SHA-256 (600,000 iterations, a
+  random salt, the passphrase in Unicode NFC form). For shares, the key is
+  split with Shamir's secret sharing over GF(256): any K shares rebuild
+  it, and fewer than K say nothing at all about it. Each share carries the
+  letter's ID and a checksum, so a typo or a card from another letter is
+  caught as you type.
+
+  What it protects against, and what it doesn't:
+  - Anyone who gets the letter file can try passphrases offline, as fast
+    as their hardware allows. PBKDF2 makes each guess slower but can't
+    save a weak passphrase. Use four or more random words, or the one this
+    page suggests (100 random bits).
+  - The length of the message isn't hidden, and neither is the label,
+    which is shown on the outside of the letter and on the cards.
+  - The letter's Content-Security-Policy stops it fetching or loading
+    anything, but no CSP stops a page from navigating away, and someone
+    who can change the file can change its code. Open a letter only if you
+    trust where it came from. A letter has no links or navigation; read
+    its code to check.
+  - It can't protect a message from a compromised device, or from someone
+    reading over your shoulder.
+
+  Limits:
+  - On iPhone and iPad, an emailed .html file may open in a preview that
+    doesn't run scripts. Save it to Files and open it in Safari.
+  - The Web Crypto API only works on https:// pages and files opened from
+    disk, so a letter served over plain http:// won't open.
+  - Scanning share cards from a photo uses BarcodeDetector, which only
+    some Chromium-based browsers have. Elsewhere, type the codes in.
+
+  Every letter carries a copy of the code in the "runtime" script below
+  and passes the same conventions as this page, self-test included.
+
+  Open this file with #test at the end of the URL to run the built-in
+  self-test of the encoding, secret sharing, encryption, QR codes and the
+  letters this page writes, and show the results on the page.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sealed letter</title>
+<meta name="description" content="Seal a message into a self-contained HTML file that decrypts itself with a passphrase or with share cards.">
+<style>
+  :root {
+    --paper: #f4f1ea; --panel: #fffdf8; --ink: #2a2522; --ink-2: #5d554e; --rule: #d9d1c4;
+    --accent: #8c2f2b; --accent-ink: #ffffff; --warn: #8a5a00; --pass-bg: #e3f2e9; --pass: #1f6b43; --fail-bg: #f8e3e3; --fail: #9b2c2c;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) { :root {
+    --paper: #1a1716; --panel: #24201e; --ink: #ece6df; --ink-2: #bfb6ad; --rule: #3a3431;
+    --accent: #d9776f; --accent-ink: #1a1716; --warn: #e0b354; --pass-bg: #1e3a2d; --pass: #6cc49a; --fail-bg: #44262b; --fail: #e08a96;
+  } }
+  *, *::before, *::after { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main {
+    max-width: 42rem; margin: 0 auto;
+    padding: max(2rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) 3rem max(1rem, env(safe-area-inset-left));
+  }
+  h1 { margin: 0 0 0.25rem; font: 600 2rem/1.2 Georgia, "Times New Roman", serif; }
+  h2 { margin: 0 0 0.5rem; font: 600 1.375rem/1.3 Georgia, "Times New Roman", serif; }
+  .lede { margin: 0 0 1.5rem; color: var(--ink-2); }
+  .panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 1.25rem; margin-bottom: 1.25rem; }
+  label, legend { font-weight: 600; }
+  .field { display: block; margin-bottom: 1rem; }
+  .field > span:first-child { display: block; margin-bottom: 0.25rem; }
+  small, .hint { font-weight: 400; color: var(--ink-2); font-size: 0.875rem; }
+  .hint { margin: 0.25rem 0 0; }
+  input[type=text], input[type=password], input[type=number], textarea {
+    width: 100%; font: inherit; color: inherit; background: var(--paper);
+    border: 1px solid var(--rule); border-radius: 6px; padding: 0.5rem 0.625rem;
+  }
+  input[type=number] { width: 4.5rem; display: inline-block; padding: 0.25rem 0.375rem; }
+  textarea { min-height: 10rem; resize: vertical; font-family: Georgia, "Times New Roman", serif; font-size: 1.0625rem; }
+  input:focus-visible, textarea:focus-visible, button:focus-visible, .button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  fieldset { border: 0; padding: 0; margin: 0 0 1rem; }
+  legend { padding: 0; margin-bottom: 0.5rem; }
+  .option { border: 1px solid var(--rule); border-radius: 8px; padding: 0.75rem; margin-bottom: 0.75rem; }
+  .option > label:first-child { display: flex; gap: 0.5rem; align-items: baseline; }
+  .option .sub { margin: 0.75rem 0 0 1.5rem; }
+  .option .sub[hidden] { display: none; }
+  .row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+  .row > input[type=password], .row > input[type=text] { flex: 1 1 12rem; width: auto; }
+  button, .button {
+    font: inherit; font-weight: 600; cursor: pointer; display: inline-block; text-decoration: none; text-align: center;
+    padding: 0.5rem 1rem; min-height: 44px; border-radius: 6px; border: 1px solid var(--accent);
+    background: var(--accent); color: var(--accent-ink);
+  }
+  button.secondary, .button.secondary { background: transparent; color: var(--accent); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .warn { color: var(--warn); }
+  .error { color: var(--fail); }
+  #status:empty { display: none; }
+  #status { margin: 0.75rem 0 0; }
+  #result[hidden], #cards-section[hidden] { display: none; }
+  #cards { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr)); margin-top: 1rem; }
+  .card { background: #fff; color: #111; border: 1px dashed #777; border-radius: 8px; padding: 1rem; break-inside: avoid; }
+  .card .head { font: 600 0.8125rem/1.3 system-ui, sans-serif; text-transform: uppercase; letter-spacing: 0.04em; color: #8c2f2b; }
+  .card .label { font: 600 1.125rem/1.3 Georgia, serif; margin: 0.25rem 0 0.5rem; overflow-wrap: anywhere; }
+  .card svg { display: block; width: 10rem; height: 10rem; margin: 0 auto 0.5rem; }
+  .card .code { font: 600 0.9375rem/1.5 ui-monospace, Menlo, Consolas, monospace; letter-spacing: 0.04em; text-align: center; margin: 0 0 0.5rem; word-spacing: 0.25em; }
+  .card .note { font-size: 0.8125rem; line-height: 1.4; color: #333; margin: 0; }
+  details { margin-top: 1.5rem; color: var(--ink-2); }
+  summary { cursor: pointer; font-weight: 600; color: var(--ink); }
+  footer { margin-top: 2rem; font-size: 0.875rem; color: var(--ink-2); }
+  footer a { color: var(--accent); }
+  #test-report { position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 10; max-height: 40vh; overflow: auto; padding: 10px 14px; border: 1px solid; border-radius: 8px; font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; }
+  #test-report.pass { background: var(--pass-bg); color: var(--pass); }
+  #test-report.fail { background: var(--fail-bg); color: var(--fail); }
+  @media print {
+    body { background: #fff; }
+    main { max-width: none; padding: 0; }
+    .no-print, #test-report { display: none !important; }
+    #cards { grid-template-columns: 1fr 1fr; margin: 0; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header class="no-print">
+    <h1>Sealed letter</h1>
+    <p class="lede">Write a message and seal it into a new HTML file that opens itself, with a passphrase or with share cards held by people you trust. Nothing you type leaves this page.</p>
+  </header>
+
+  <form id="compose" class="panel no-print" novalidate>
+    <label class="field"><span>Label <small>shown on the outside, not secret</small></span>
+      <input id="label" type="text" maxlength="120" autocomplete="off" placeholder="For Sam, if something happens to me"></label>
+    <label class="field"><span>Message</span>
+      <textarea id="message" rows="10" spellcheck="true"></textarea></label>
+
+    <fieldset>
+      <legend>Who can open it</legend>
+      <div class="option">
+        <label><input id="use-pass" type="checkbox" checked> Anyone with the passphrase</label>
+        <div id="pass-fields" class="sub">
+          <label class="field"><span>Passphrase</span>
+            <span class="row"><input id="pass" type="password" autocomplete="new-password" spellcheck="false" autocapitalize="off">
+              <button id="suggest" type="button" class="secondary">Suggest one</button></span></label>
+          <label class="field"><span>Passphrase again</span>
+            <input id="pass2" type="password" autocomplete="new-password" spellcheck="false" autocapitalize="off"></label>
+          <label><input id="show-pass" type="checkbox"> <small>Show the passphrase</small></label>
+          <p class="hint">Anyone with the file can guess passphrases as fast as their computer allows, so use four or more random words, or the one this page suggests.</p>
+        </div>
+      </div>
+      <div class="option">
+        <label><input id="use-shares" type="checkbox"> Any group of people holding enough share cards</label>
+        <div id="share-fields" class="sub" hidden>
+          <span class="row">Make <input id="n" type="number" min="2" max="16" value="5" aria-label="Number of cards"> cards, any
+            <input id="k" type="number" min="2" max="16" value="3" aria-label="Cards needed"> of which open the letter.</span>
+          <p class="hint">Fewer cards than that reveal nothing. You'll print the cards on the next step.</p>
+        </div>
+      </div>
+    </fieldset>
+
+    <button id="seal" type="submit">Seal the letter</button>
+    <p id="status" role="status"></p>
+  </form>
+
+  <section id="result" hidden>
+    <div class="panel no-print">
+      <h2>Sealed</h2>
+      <p id="checked"></p>
+      <div class="row">
+        <a id="download" class="button" href="#" download="sealed-letter.html">Save the letter</a>
+        <button id="again" type="button" class="secondary">Start over</button>
+      </div>
+      <p class="hint" id="file-hint"></p>
+    </div>
+    <div id="cards-section" hidden>
+      <div class="panel no-print">
+        <h2>Share cards</h2>
+        <p>Print the cards and give one to each person. Each card works with the letter file only, so tell them where it is. Once they're printed, nothing here needs keeping.</p>
+        <button id="print" type="button">Print the cards</button>
+      </div>
+      <div id="cards"></div>
+    </div>
+  </section>
+
+  <details class="no-print">
+    <summary>How it works, and what it protects against</summary>
+    <p>The message is encrypted with AES-256-GCM under a random key. For the passphrase, that key is encrypted under a second key derived from the passphrase with PBKDF2-SHA-256 and 600,000 iterations. For share cards, the key is split with Shamir's secret sharing: any K cards rebuild it, and fewer than K say nothing about it.</p>
+    <p>The letter is a single HTML file with its ciphertext and the code to open it, and nothing else. Its Content-Security-Policy stops it from loading anything from the network.</p>
+    <p>Anyone who has the file can try passphrases offline. A slow key derivation makes that harder, but only a strong passphrase makes it hopeless. The label and the length of the message aren't hidden. And since anyone who can change the file can change its code, open a letter only if you trust where it came from.</p>
+    <p>On iPhone and iPad, an emailed .html file may open in a preview that doesn't run scripts. Save it to Files and open it in Safari.</p>
+  </details>
+  <footer class="no-print">Part of <a href="https://github.com/ethanmdavidson/porta-pages">porta-pages</a>.</footer>
+</main>
+
+<script id="runtime">
+/* ===================== RUNTIME ===================== */
+// Shared by this page and every letter it seals: each letter carries a verbatim copy of this script.
+'use strict';
+const SL = (() => {
+  const enc = new TextEncoder();
+  const rand = (n) => crypto.getRandomValues(new Uint8Array(n));
+  const hex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+
+  function toB64(bytes) {
+    let s = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return btoa(s);
+  }
+  function fromB64(s) { return Uint8Array.from(atob(s), (c) => c.charCodeAt(0)); }
+
+  // Crockford's base32: no I, L, O or U, and reading tolerates the usual mix-ups (O for 0, I and L for 1).
+  const B32 = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+  function toB32(bytes) {
+    let bits = 0, val = 0, out = '';
+    for (const b of bytes) {
+      val = (val << 8) | b; bits += 8;
+      while (bits >= 5) { bits -= 5; out += B32[(val >>> bits) & 31]; }
+      val &= (1 << bits) - 1;
+    }
+    if (bits) out += B32[(val << (5 - bits)) & 31];
+    return out;
+  }
+  function fromB32(text) {
+    const s = text.toUpperCase().replace(/O/g, '0').replace(/[IL]/g, '1').replace(/[\s-]/g, '');
+    let bits = 0, val = 0;
+    const out = [];
+    for (const c of s) {
+      const v = B32.indexOf(c);
+      if (v < 0) return null;
+      val = (val << 5) | v; bits += 5;
+      if (bits >= 8) { bits -= 8; out.push((val >>> bits) & 255); }
+      val &= (1 << bits) - 1;
+    }
+    return Uint8Array.from(out);
+  }
+
+  // GF(256) with the polynomial x^8 + x^4 + x^3 + x^2 + 1 (0x11d), the same field QR codes use.
+  const EXP = new Uint8Array(512), LOG = new Uint8Array(256);
+  for (let i = 0, x = 1; i < 255; i++) { EXP[i] = x; LOG[x] = i; x <<= 1; if (x & 256) x ^= 0x11d; }
+  for (let i = 255; i < 512; i++) EXP[i] = EXP[i - 255];
+  const gmul = (a, b) => (a && b ? EXP[LOG[a] + LOG[b]] : 0);
+  function gdiv(a, b) {
+    if (!b) throw new Error('division by zero in GF(256)');
+    return a ? EXP[LOG[a] + 255 - LOG[b]] : 0;
+  }
+
+  // Shamir's secret sharing, one random polynomial of degree k-1 per byte, evaluated at x = 1..n.
+  function split(secret, k, n) {
+    const shares = [];
+    for (let x = 1; x <= n; x++) shares.push({ x, y: new Uint8Array(secret.length) });
+    const coef = new Uint8Array(k - 1);
+    for (let i = 0; i < secret.length; i++) {
+      crypto.getRandomValues(coef);
+      for (const s of shares) {
+        let y = 0;
+        for (let j = k - 2; j >= 0; j--) y = gmul(y, s.x) ^ coef[j];
+        s.y[i] = gmul(y, s.x) ^ secret[i];
+      }
+    }
+    coef.fill(0);
+    return shares;
+  }
+  // Lagrange interpolation at x = 0. In GF(256), subtraction is XOR.
+  function combine(shares) {
+    const out = new Uint8Array(shares[0].y.length);
+    shares.forEach((si, i) => {
+      let l = 1;
+      shares.forEach((sj, j) => { if (j !== i) l = gmul(l, gdiv(sj.x, sj.x ^ si.x)); });
+      for (let b = 0; b < out.length; b++) out[b] ^= gmul(si.y[b], l);
+    });
+    return out;
+  }
+
+  // A share is [version 1, letter ID (4 bytes), k, x, y (32 bytes), first 2 bytes of SHA-256 of all that], in base32.
+  const SHARE_BYTES = 41;
+  async function checksum(body) { return new Uint8Array(await crypto.subtle.digest('SHA-256', body)).subarray(0, 2); }
+  async function encodeShare(id, k, s) {
+    const b = new Uint8Array(SHARE_BYTES);
+    b[0] = 1; b.set(id, 1); b[5] = k; b[6] = s.x; b.set(s.y, 7);
+    b.set(await checksum(b.subarray(0, SHARE_BYTES - 2)), SHARE_BYTES - 2);
+    return toB32(b);
+  }
+  const groupCode = (code) => code.match(/.{1,6}/g).join(' ');
+  // Resolves to { id, k, x, y } or { error }.
+  async function decodeShare(text) {
+    const b = fromB32(text);
+    if (!b) return { error: 'has a character that share codes don’t use' };
+    if (b.length < SHARE_BYTES) return { error: 'is too short' };
+    if (b.length > SHARE_BYTES) return { error: 'is too long' };
+    const sum = await checksum(b.subarray(0, SHARE_BYTES - 2));
+    if (sum[0] !== b[SHARE_BYTES - 2] || sum[1] !== b[SHARE_BYTES - 1]) return { error: 'has a typo (its checksum doesn’t match)' };
+    if (b[0] !== 1) return { error: 'is from a newer version of this app' };
+    return { id: hex(b.subarray(1, 5)), k: b[5], x: b[6], y: b.slice(7, SHARE_BYTES - 2) };
+  }
+  // Checks decoded shares against a letter. Returns a problem to show, or '' if they're enough to open it.
+  function shareProblem(data, shares) {
+    const seen = new Set();
+    for (const s of shares) {
+      if (s.id !== data.id) return 'One of the shares is for a different letter.';
+      if (seen.has(s.x)) return 'The same share is entered twice.';
+      seen.add(s.x);
+    }
+    if (shares.length < data.shares.k) return 'Enter ' + data.shares.k + ' different shares.';
+    return '';
+  }
+
+  const ITERATIONS = 600000;
+  async function passKey(pass, salt, iterations) {
+    const base = await crypto.subtle.importKey('raw', enc.encode(pass.normalize('NFC')), 'PBKDF2', false, ['deriveKey']);
+    return crypto.subtle.deriveKey({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations }, base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  }
+  const aesKey = (raw) => crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
+  async function gcm(op, key, iv, bytes) { return new Uint8Array(await crypto.subtle[op]({ name: 'AES-GCM', iv }, key, bytes)); }
+
+  // Resolves to { data, shares }: the letter's contents (JSON-safe) and the share codes, if any.
+  async function seal({ label = '', message, passphrase = '', k = 0, n = 0, iterations = ITERATIONS }) {
+    const key = rand(32), id = rand(4), iv = rand(12);
+    const data = {
+      format: 'porta-pages sealed letter', v: 1, label, id: hex(id),
+      iv: toB64(iv), ct: toB64(await gcm('encrypt', await aesKey(key), iv, enc.encode(message))),
+    };
+    if (passphrase) {
+      const salt = rand(16), wiv = rand(12);
+      const wrapped = await gcm('encrypt', await passKey(passphrase, salt, iterations), wiv, key);
+      data.pass = { kdf: 'PBKDF2-SHA-256', iterations, salt: toB64(salt), iv: toB64(wiv), key: toB64(wrapped) };
+    }
+    let shares = [];
+    if (n) {
+      data.shares = { k, n };
+      shares = await Promise.all(split(key, k, n).map((s) => encodeShare(id, k, s)));
+    }
+    key.fill(0);
+    return { data, shares };
+  }
+  async function openWithKey(data, key) {
+    const plain = await gcm('decrypt', await aesKey(key), fromB64(data.iv), fromB64(data.ct));
+    key.fill(0);
+    return new TextDecoder().decode(plain);
+  }
+  async function openWithPassphrase(data, pass) {
+    const p = data.pass;
+    let key;
+    try { key = await gcm('decrypt', await passKey(pass, fromB64(p.salt), p.iterations), fromB64(p.iv), fromB64(p.key)); }
+    catch (e) { throw new Error('That passphrase doesn’t open this letter.'); }
+    return openWithKey(data, key);
+  }
+  async function openWithShares(data, shares) {
+    const problem = shareProblem(data, shares);
+    if (problem) throw new Error(problem);
+    try { return await openWithKey(data, combine(shares.slice(0, data.shares.k))); }
+    catch (e) { throw new Error('These shares don’t open this letter.'); }
+  }
+
+  /* ---------- self-test ---------- */
+  function tester() {
+    const t = { n: 0, failures: [] };
+    t.ok = (cond, name, got) => { t.n++; if (!cond) t.failures.push(name + (got !== undefined ? ' — got ' + got : '')); };
+    return t;
+  }
+  const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+  async function selfTest(t) {
+    const ok = t.ok;
+    // base32
+    ok(toB32(Uint8Array.of(255)) === 'ZW', 'base32 of 0xff', toB32(Uint8Array.of(255)));
+    ok(toB32(enc.encode('foobar')) === 'CSQPYRK1E8', 'base32 of "foobar"', toB32(enc.encode('foobar')));
+    const r41 = rand(41);
+    ok(same(fromB32(toB32(r41)), r41), 'base32 round trip');
+    ok(same(fromB32('o1-il L'), fromB32('0111 1')), 'base32 reads O as 0 and I, L as 1, ignoring spaces and dashes');
+    ok(fromB32('AU') === null, 'base32 rejects U');
+    // GF(256)
+    let inverses = true;
+    for (let a = 1; a < 256; a++) if (gmul(a, gdiv(1, a)) !== 1) inverses = false;
+    ok(inverses, 'every nonzero element of GF(256) has an inverse');
+    ok(gmul(2, 128) === 0x1d, 'GF(256) reduces by 0x11d', gmul(2, 128));
+    // Shamir
+    const secret = rand(32), parts = split(secret, 3, 5);
+    let all = true;
+    for (let a = 0; a < 5; a++) for (let b = a + 1; b < 5; b++) for (let c = b + 1; c < 5; c++) {
+      if (!same(combine([parts[a], parts[b], parts[c]]), secret)) all = false;
+    }
+    ok(all, 'every 3 of 5 shares rebuild the secret');
+    ok(same(combine([parts[4], parts[1], parts[2], parts[0]]), secret), 'more shares than needed, in any order, also work');
+    ok(!same(combine([parts[0], parts[3]]), secret), '2 of 5 shares do not rebuild the secret');
+    const two = split(secret, 2, 2);
+    ok(same(combine(two), secret), '2 of 2 shares rebuild the secret');
+    // share codes
+    const id = Uint8Array.of(1, 2, 3, 4), code = await encodeShare(id, 3, parts[1]);
+    ok(code.length === 66 && /^[0-9A-HJKMNP-TV-Z]+$/.test(code), 'a share code is 66 base32 characters', code.length);
+    const back = await decodeShare(groupCode(code).toLowerCase());
+    ok(!back.error && back.id === '01020304' && back.k === 3 && back.x === 2 && same(back.y, parts[1].y), 'a share code round-trips, grouped and in lower case', back.error);
+    const typo = code.slice(0, 10) + (code[10] === 'A' ? 'B' : 'A') + code.slice(11);
+    ok(/typo/.test((await decodeShare(typo)).error || ''), 'a one-character typo is caught');
+    ok(/short/.test((await decodeShare(code.slice(0, 60))).error || ''), 'a short share code is caught');
+    ok(/character/.test((await decodeShare(code + 'U')).error || ''), 'a stray character is caught');
+    // sealing and opening (few iterations, to keep the test quick)
+    const message = 'Dear Sam,\nÜnïcode ✉️ 封 survives.\n';
+    const sealed = await seal({ label: 'Test', message, passphrase: 'correct horse', k: 2, n: 3, iterations: 1000 });
+    const d = sealed.data;
+    ok(d.v === 1 && d.pass && d.pass.iterations === 1000 && d.shares.k === 2 && d.shares.n === 3, 'a letter records how it is locked');
+    ok(sealed.shares.length === 3, 'a letter gets n share codes', sealed.shares.length);
+    ok(!JSON.stringify(d).includes('Dear Sam'), 'the letter does not contain the message in the clear');
+    ok(await openWithPassphrase(d, 'correct horse') === message, 'the passphrase opens the letter');
+    ok(await openWithPassphrase(d, 'correct horse'.normalize('NFD')) === message, 'the passphrase is compared in NFC form');
+    let wrong = '';
+    try { await openWithPassphrase(d, 'correct horsf'); } catch (e) { wrong = e.message; }
+    ok(/doesn’t open/.test(wrong), 'a wrong passphrase is rejected', wrong);
+    const codes = await Promise.all(sealed.shares.map(decodeShare));
+    ok(await openWithShares(d, [codes[2], codes[0]]) === message, 'any 2 of the 3 shares open the letter');
+    let few = '';
+    try { await openWithShares(d, [codes[1]]); } catch (e) { few = e.message; }
+    ok(/Enter 2/.test(few), 'one share is not enough', few);
+    ok(/twice/.test(shareProblem(d, [codes[1], codes[1]])), 'the same share twice is caught');
+    const other = await seal({ message: 'x', k: 2, n: 2, iterations: 1000 });
+    const foreign = await decodeShare(other.shares[0]);
+    ok(/different letter/.test(shareProblem(d, [codes[0], foreign])), 'a share from another letter is caught');
+    ok(!other.data.pass, 'a letter without a passphrase has no passphrase lock');
+    return t;
+  }
+  function report(promise) {
+    window.portaTestResult = promise.then((t) => ({ total: t.n, failures: t.failures }), (e) => ({ total: 1, failures: ['exception during self-test: ' + (e && e.message)] }));
+    window.portaTestResult.then((r) => {
+      let el = document.getElementById('test-report');
+      if (!el) { el = document.createElement('div'); el.id = 'test-report'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
+      el.className = r.failures.length ? 'fail' : 'pass';
+      el.textContent = r.failures.length
+        ? 'Self-test: ' + r.failures.length + ' of ' + r.total + ' checks FAILED\n' + r.failures.map((f) => '✗ ' + f).join('\n')
+        : 'Self-test: all ' + r.total + ' checks passed';
+      if (r.failures.length) console.error('[sealed letter] self-test: ' + r.failures.join('; '));
+    });
+  }
+  const runTests = (more) => report((async () => { const t = tester(); if (more) await more(t); return selfTest(t); })());
+
+  /* ---------- the letter ---------- */
+  function openLetter(data) {
+    const $ = (id) => document.getElementById(id);
+    const status = (text, cls) => { $('status').textContent = text; $('status').className = cls || ''; };
+    if (data.label) { $('label').textContent = data.label; document.title = data.label + ' · Sealed letter'; }
+    $('letter-id').textContent = data.id;
+    $('pass-form').hidden = !data.pass;
+    $('shares-form').hidden = !data.shares;
+    $('or').hidden = !(data.pass && data.shares);
+    const ways = [];
+    if (data.pass) ways.push('the passphrase');
+    if (data.shares) ways.push('any ' + data.shares.k + ' of its ' + data.shares.n + ' share codes');
+    $('intro').textContent = 'To read it, enter ' + ways.join(', or ') + '.';
+    if (!(window.crypto && crypto.subtle)) {
+      status('This browser only opens sealed letters from https:// pages or from files on disk. Save the letter and open the saved file.', 'error');
+      document.querySelectorAll('form button').forEach((b) => { b.disabled = true; });
+      return;
+    }
+    const inputs = [];
+    if (data.shares) {
+      $('shares-title').textContent = 'Share codes, any ' + data.shares.k + ' of ' + data.shares.n;
+      for (let i = 0; i < data.shares.k; i++) {
+        const wrap = document.createElement('label'), input = document.createElement('input'), note = document.createElement('span');
+        wrap.className = 'share';
+        input.type = 'text'; input.autocomplete = 'off'; input.spellcheck = false;
+        input.setAttribute('autocapitalize', 'characters'); input.setAttribute('aria-label', 'Share code ' + (i + 1));
+        input.placeholder = 'Share ' + (i + 1);
+        note.className = 'note';
+        input.addEventListener('input', async () => {
+          const v = input.value;
+          const s = v.trim() ? await decodeShare(v) : null;
+          if (input.value !== v) return;
+          note.textContent = !s ? '' : s.error ? 'This code ' + s.error + '.' : s.id !== data.id ? 'This share is for a different letter.' : '✓ share ' + s.x;
+          note.className = 'note' + (s && (s.error || s.id !== data.id) ? ' error' : '');
+        });
+        wrap.append(input, note);
+        $('share-inputs').append(wrap);
+        inputs.push(input);
+      }
+      if ('BarcodeDetector' in window) {
+        Promise.resolve(BarcodeDetector.getSupportedFormats()).then((f) => { if (f.includes('qr_code')) $('scan').hidden = false; }, () => {});
+      }
+      $('scan-file').addEventListener('change', async (e) => {
+        const detector = new BarcodeDetector({ formats: ['qr_code'] });
+        let found = 0;
+        for (const file of e.target.files) {
+          try {
+            for (const code of await detector.detect(await createImageBitmap(file))) {
+              const s = await decodeShare(code.rawValue);
+              if (s.error || inputs.some((i) => i.value.replace(/\W/g, '').toUpperCase() === code.rawValue.replace(/\W/g, '').toUpperCase())) continue;
+              const empty = inputs.find((i) => !i.value.trim());
+              if (!empty) break;
+              empty.value = groupCode(code.rawValue); empty.dispatchEvent(new Event('input')); found++;
+            }
+          } catch (err) { /* not an image this browser can read */ }
+        }
+        e.target.value = '';
+        status(found ? 'Read ' + found + ' share' + (found > 1 ? 's' : '') + ' from the photos.' : 'Couldn’t find a share code in the photos. Try a closer, sharper photo, or type the codes in.', found ? '' : 'error');
+      });
+    }
+    let busy = false;
+    async function attempt(open) {
+      if (busy) return;
+      busy = true; status('Opening…');
+      document.querySelectorAll('form button').forEach((b) => { b.disabled = true; });
+      try {
+        $('message').textContent = await open();
+        status('');
+        $('sealed-view').hidden = true; $('opened').hidden = false;
+      } catch (e) { status(e.message, 'error'); }
+      document.querySelectorAll('form button').forEach((b) => { b.disabled = false; });
+      busy = false;
+    }
+    $('pass-form').addEventListener('submit', (e) => { e.preventDefault(); attempt(() => openWithPassphrase(data, $('pass').value)); });
+    $('shares-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      attempt(async () => {
+        const decoded = [];
+        for (const [i, input] of inputs.entries()) {
+          if (!input.value.trim()) continue;
+          const s = await decodeShare(input.value);
+          if (s.error) throw new Error('Share ' + (i + 1) + ' ' + s.error + '.');
+          decoded.push(s);
+        }
+        return openWithShares(data, decoded);
+      });
+    });
+    $('copy').hidden = !(navigator.clipboard && navigator.clipboard.writeText);
+    $('copy').addEventListener('click', () => {
+      navigator.clipboard.writeText($('message').textContent).then(() => { $('copy').textContent = 'Copied'; setTimeout(() => { $('copy').textContent = 'Copy'; }, 1500); }, () => {});
+    });
+    $('close').addEventListener('click', () => {
+      $('message').textContent = ''; $('pass').value = ''; inputs.forEach((i) => { i.value = ''; i.dispatchEvent(new Event('input')); });
+      $('opened').hidden = true; $('sealed-view').hidden = false;
+    });
+  }
+
+  const letterData = document.getElementById('sealed');
+  if (letterData) {
+    openLetter(JSON.parse(letterData.textContent));
+    if (location.hash === '#test') runTests();
+  }
+
+  return { toB32, fromB32, EXP, LOG, gmul, split, combine, encodeShare, decodeShare, groupCode, seal, openWithPassphrase, openWithShares, ITERATIONS, tester, runTests, rand };
+})();
+</script>
+
+<script>
+/* ===================== QR CODES ===================== */
+// Byte mode, error correction level M, versions 1 to 10: plenty for a 66-character share code (version 5).
+const QR = (() => {
+  const { gmul } = SL;
+  // Per version: error correction codewords per block, then [blocks, data codewords per block] for each group.
+  const BLOCKS = [null, [10, [1, 16]], [16, [1, 28]], [26, [1, 44]], [18, [2, 32]], [24, [2, 43]], [16, [4, 27]],
+    [18, [4, 31]], [22, [2, 38], [2, 39]], [22, [3, 36], [2, 37]], [26, [4, 43], [1, 44]]];
+  const ALIGN = [null, [], [6, 18], [6, 22], [6, 26], [6, 30], [6, 34], [6, 22, 38], [6, 24, 42], [6, 26, 46], [6, 28, 50]];
+  const dataCodewords = (v) => BLOCKS[v].slice(1).reduce((s, [count, len]) => s + count * len, 0);
+
+  function rsDivisor(degree) {
+    const r = new Uint8Array(degree);
+    r[degree - 1] = 1;
+    let root = 1;
+    for (let i = 0; i < degree; i++) {
+      for (let j = 0; j < degree; j++) { r[j] = gmul(r[j], root); if (j + 1 < degree) r[j] ^= r[j + 1]; }
+      root = gmul(root, 2);
+    }
+    return r;
+  }
+  function rsRemainder(data, divisor) {
+    const r = new Uint8Array(divisor.length);
+    for (const b of data) {
+      const f = b ^ r[0];
+      r.copyWithin(0, 1); r[r.length - 1] = 0;
+      for (let i = 0; i < r.length; i++) r[i] ^= gmul(divisor[i], f);
+    }
+    return r;
+  }
+  function formatBits(mask) { // level M is 00
+    let rem = mask;
+    for (let i = 0; i < 10; i++) rem = (rem << 1) ^ ((rem >>> 9) * 0x537);
+    return ((mask << 10) | rem) ^ 0x5412;
+  }
+  function versionBits(v) {
+    let rem = v;
+    for (let i = 0; i < 12; i++) rem = (rem << 1) ^ ((rem >>> 11) * 0x1f25);
+    return (v << 12) | rem;
+  }
+  // m[y][x]; set() is (x, y).
+  function drawFormat(set, size, mask) {
+    const bits = formatBits(mask), b = (i) => (bits >>> i) & 1;
+    for (let i = 0; i <= 5; i++) set(8, i, b(i));
+    set(8, 7, b(6)); set(8, 8, b(7)); set(7, 8, b(8));
+    for (let i = 9; i < 15; i++) set(14 - i, 8, b(i));
+    for (let i = 0; i < 8; i++) set(size - 1 - i, 8, b(i));
+    for (let i = 8; i < 15; i++) set(8, size - 15 + i, b(i));
+    set(8, size - 8, 1);
+  }
+  const MASKS = [
+    (x, y) => (x + y) % 2 === 0, (x, y) => y % 2 === 0, (x, y) => x % 3 === 0, (x, y) => (x + y) % 3 === 0,
+    (x, y) => (Math.floor(x / 3) + Math.floor(y / 2)) % 2 === 0, (x, y) => (x * y) % 2 + (x * y) % 3 === 0,
+    (x, y) => ((x * y) % 2 + (x * y) % 3) % 2 === 0, (x, y) => (((x + y) % 2) + (x * y) % 3) % 2 === 0,
+  ];
+  function penalty(m) {
+    const n = m.length, lines = [];
+    let p = 0, dark = 0;
+    for (let i = 0; i < n; i++) { lines.push(m[i]); lines.push(m.map((row) => row[i])); }
+    for (const line of lines) {
+      let run = 1;
+      for (let i = 1; i <= n; i++) {
+        if (i < n && line[i] === line[i - 1]) run++;
+        else { if (run >= 5) p += run - 2; run = 1; }
+      }
+      const s = Array.prototype.join.call(line, '');
+      for (let i = s.indexOf('1011101'); i >= 0; i = s.indexOf('1011101', i + 1)) {
+        if ((i >= 4 && s.slice(i - 4, i) === '0000') || s.slice(i + 7, i + 11) === '0000') p += 40;
+      }
+    }
+    for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+      dark += m[y][x];
+      if (x + 1 < n && y + 1 < n && m[y][x] === m[y][x + 1] && m[y][x] === m[y + 1][x] && m[y][x] === m[y + 1][x + 1]) p += 3;
+    }
+    return p + 10 * Math.floor(Math.abs((dark * 20) / (n * n) - 10));
+  }
+
+  function codewords(text) {
+    const bytes = new TextEncoder().encode(text);
+    let v = 1;
+    while (4 + (v < 10 ? 8 : 16) + 8 * bytes.length > dataCodewords(v) * 8) if (++v > 10) throw new Error('too long for a QR code');
+    const bits = [], put = (val, len) => { for (let i = len - 1; i >= 0; i--) bits.push((val >>> i) & 1); };
+    put(4, 4); put(bytes.length, v < 10 ? 8 : 16); bytes.forEach((b) => put(b, 8));
+    const cap = dataCodewords(v) * 8;
+    put(0, Math.min(4, cap - bits.length));
+    while (bits.length % 8) bits.push(0);
+    for (let pad = 0xec; bits.length < cap; pad ^= 0xec ^ 0x11) put(pad, 8);
+    const data = new Uint8Array(cap / 8);
+    bits.forEach((bit, i) => { data[i >>> 3] |= bit << (7 - (i & 7)); });
+    const [ec, ...groups] = BLOCKS[v], divisor = rsDivisor(ec), blocks = [];
+    let off = 0;
+    for (const [count, len] of groups) for (let i = 0; i < count; i++) {
+      const d = data.subarray(off, off += len);
+      blocks.push({ d, e: rsRemainder(d, divisor) });
+    }
+    const out = [], longest = Math.max(...blocks.map((b) => b.d.length));
+    for (let i = 0; i < longest; i++) for (const b of blocks) if (i < b.d.length) out.push(b.d[i]);
+    for (let i = 0; i < ec; i++) for (const b of blocks) out.push(b.e[i]);
+    return { v, out };
+  }
+
+  // Resolves text to a square array of rows of 0 (light) and 1 (dark), without the quiet zone.
+  function encode(text) {
+    const { v, out } = codewords(text), size = 17 + 4 * v;
+    const m = Array.from({ length: size }, () => new Uint8Array(size));
+    const fn = Array.from({ length: size }, () => new Uint8Array(size));
+    const set = (x, y, dark) => { m[y][x] = dark ? 1 : 0; fn[y][x] = 1; };
+    for (let i = 0; i < size; i++) { set(6, i, i % 2 === 0); set(i, 6, i % 2 === 0); }
+    for (const [cx, cy] of [[3, 3], [size - 4, 3], [3, size - 4]]) {
+      for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) {
+        const x = cx + dx, y = cy + dy, d = Math.max(Math.abs(dx), Math.abs(dy));
+        if (x >= 0 && y >= 0 && x < size && y < size) set(x, y, d !== 2 && d !== 4);
+      }
+    }
+    const al = ALIGN[v], last = al.length - 1;
+    al.forEach((ax, i) => al.forEach((ay, j) => {
+      if ((i === 0 && j === 0) || (i === 0 && j === last) || (i === last && j === 0)) return;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) set(ax + dx, ay + dy, Math.max(Math.abs(dx), Math.abs(dy)) !== 1);
+    }));
+    drawFormat(set, size, 0); // reserves the format areas; the real bits go in after masking
+    if (v >= 7) {
+      const bits = versionBits(v);
+      for (let i = 0; i < 18; i++) {
+        const bit = (bits >>> i) & 1, a = size - 11 + (i % 3), b = Math.floor(i / 3);
+        set(a, b, bit); set(b, a, bit);
+      }
+    }
+    let i = 0;
+    for (let right = size - 1; right >= 1; right -= 2) {
+      if (right === 6) right = 5;
+      const upward = ((right + 1) & 2) === 0;
+      for (let vert = 0; vert < size; vert++) for (let j = 0; j < 2; j++) {
+        const x = right - j, y = upward ? size - 1 - vert : vert;
+        if (!fn[y][x] && i < out.length * 8) { m[y][x] = (out[i >>> 3] >>> (7 - (i & 7))) & 1; i++; }
+      }
+    }
+    let best, bestScore = Infinity;
+    MASKS.forEach((mask, k) => {
+      const t = m.map((row) => row.slice());
+      for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) if (!fn[y][x] && mask(x, y)) t[y][x] ^= 1;
+      drawFormat((x, y, dark) => { t[y][x] = dark; }, size, k);
+      const score = penalty(t);
+      if (score < bestScore) { best = t; bestScore = score; }
+    });
+    return best;
+  }
+
+  function svg(text, label) {
+    const m = encode(text), q = 4, n = m.length + 2 * q, NS = 'http://www.w3.org/2000/svg';
+    let d = '';
+    m.forEach((row, y) => row.forEach((dark, x) => { if (dark) d += 'M' + (x + q) + ' ' + (y + q) + 'h1v1h-1z'; }));
+    const el = document.createElementNS(NS, 'svg');
+    el.setAttribute('viewBox', '0 0 ' + n + ' ' + n);
+    el.setAttribute('role', 'img');
+    el.setAttribute('aria-label', label);
+    el.setAttribute('shape-rendering', 'crispEdges');
+    const bg = document.createElementNS(NS, 'rect');
+    bg.setAttribute('width', n); bg.setAttribute('height', n); bg.setAttribute('fill', '#fff');
+    const path = document.createElementNS(NS, 'path');
+    path.setAttribute('d', d); path.setAttribute('fill', '#000');
+    el.append(bg, path);
+    return el;
+  }
+
+  return { encode, svg, codewords, rsDivisor, rsRemainder, formatBits, versionBits };
+})();
+
+/* ===================== THE LETTER FILE ===================== */
+// Built from strings, so no closing script tag or comment opener can appear literally in this script.
+const SCRIPT = '<' + 'script', END_SCRIPT = '<' + '/script>', COMMENT = '<' + '!--';
+
+const LETTER_STYLE = `
+  :root {
+    --paper: #efe7d8; --panel: #fbf6ec; --ink: #2a2522; --ink-2: #5d554e; --rule: #d6cab5;
+    --accent: #8c2f2b; --accent-ink: #ffffff; --pass-bg: #e3f2e9; --pass: #1f6b43; --fail-bg: #f8e3e3; --fail: #9b2c2c;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) { :root {
+    --paper: #1a1716; --panel: #24201e; --ink: #ece6df; --ink-2: #bfb6ad; --rule: #3a3431;
+    --accent: #d9776f; --accent-ink: #1a1716; --pass-bg: #1e3a2d; --pass: #6cc49a; --fail-bg: #44262b; --fail: #e08a96;
+  } }
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 38rem; margin: 0 auto; padding: max(2rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) 3rem max(1rem, env(safe-area-inset-left)); }
+  .envelope, #opened { position: relative; background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 2.5rem 1.25rem 1.25rem; box-shadow: 0 1px 3px rgb(0 0 0 / 0.08); }
+  .seal { position: absolute; top: -1.5rem; left: 50%; width: 3rem; height: 3rem; margin-left: -1.5rem; border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, #c4544d, #7a2420 70%); box-shadow: 0 2px 4px rgb(0 0 0 / 0.3), inset 0 0 0 4px rgb(255 255 255 / 0.12); }
+  .kicker { margin: 0; text-align: center; font-size: 0.8125rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); }
+  h1 { margin: 0.25rem 0 0.5rem; text-align: center; font: 600 1.75rem/1.25 Georgia, "Times New Roman", serif; overflow-wrap: anywhere; }
+  #intro { text-align: center; color: var(--ink-2); margin: 0 0 1.25rem; }
+  form > label, .label { display: block; font-weight: 600; margin-bottom: 0.25rem; }
+  input { width: 100%; font: inherit; color: inherit; background: var(--paper); border: 1px solid var(--rule); border-radius: 6px; padding: 0.5rem 0.625rem; }
+  label.share { display: block; margin-bottom: 0.5rem; }
+  label.share input { font-family: ui-monospace, Menlo, Consolas, monospace; text-transform: uppercase; }
+  label.share input::placeholder { text-transform: none; }
+  .note { display: block; font-size: 0.875rem; color: var(--pass); min-height: 1.3em; }
+  .row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+  .row > input { flex: 1 1 12rem; width: auto; }
+  button, .button { font: inherit; font-weight: 600; cursor: pointer; padding: 0.5rem 1rem; min-height: 44px; border-radius: 6px;
+    border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink); display: inline-flex; align-items: center; }
+  .secondary { background: transparent; color: var(--accent); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  input:focus-visible, button:focus-visible, .button:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .or { text-align: center; color: var(--ink-2); margin: 1rem 0; }
+  #status { margin: 1rem 0 0; }
+  #status:empty { display: none; }
+  .error, .note.error { color: var(--fail); }
+  [hidden] { display: none !important; }
+  #opened { padding-top: 1.25rem; }
+  #message { white-space: pre-wrap; overflow-wrap: anywhere; font: 1.0625rem/1.6 Georgia, "Times New Roman", serif; margin: 0 0 1.25rem; }
+  footer { margin-top: 2rem; font-size: 0.8125rem; color: var(--ink-2); text-align: center; }
+  #test-report { position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 10; max-height: 40vh; overflow: auto; padding: 10px 14px; border: 1px solid; border-radius: 8px; font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; }
+  #test-report.pass { background: var(--pass-bg); color: var(--pass); }
+  #test-report.fail { background: var(--fail-bg); color: var(--fail); }
+  @media print { .envelope { display: none; } #opened { border: 0; box-shadow: none; } #opened .row { display: none; } }
+`;
+
+const LETTER_BODY = `
+<main>
+  <div class="envelope" id="sealed-view">
+    <div class="seal" aria-hidden="true"></div>
+    <p class="kicker">Sealed letter</p>
+    <h1 id="label">A sealed letter</h1>
+    <p id="intro"></p>
+    <form id="pass-form" hidden>
+      <label for="pass">Passphrase</label>
+      <div class="row"><input id="pass" type="password" autocomplete="off" spellcheck="false" autocapitalize="off"><button type="submit">Open</button></div>
+    </form>
+    <p id="or" class="or" hidden>or</p>
+    <form id="shares-form" hidden>
+      <p class="label" id="shares-title"></p>
+      <div id="share-inputs"></div>
+      <div class="row">
+        <button type="submit">Open</button>
+        <label id="scan" class="button secondary" hidden>Scan photos of cards<input id="scan-file" type="file" accept="image/*" multiple hidden></label>
+      </div>
+    </form>
+    <p id="status" role="status"></p>
+  </div>
+  <section id="opened" hidden>
+    <div id="message"></div>
+    <div class="row"><button id="copy" type="button">Copy</button><button id="close" type="button" class="secondary">Close</button></div>
+  </section>
+  <footer>Sealed with porta-pages. Nothing on this page uses the network. Letter <span id="letter-id"></span></footer>
+</main>
+`;
+
+function letterHtml(data) {
+  const ways = [];
+  if (data.pass) ways.push('the passphrase');
+  if (data.shares) ways.push('any ' + data.shares.k + ' of the ' + data.shares.n + ' codes on its share cards');
+  const locks = [];
+  if (data.pass) locks.push('  For the passphrase, that key is encrypted under a key derived from the\n  passphrase with PBKDF2-SHA-256 (' + data.pass.iterations.toLocaleString('en-US') + ' iterations), in Unicode NFC form.');
+  if (data.shares) locks.push('  For the share cards, the key is split with Shamir\'s secret sharing over\n  GF(256), so that any ' + data.shares.k + ' of the ' + data.shares.n + ' shares rebuild it and fewer reveal nothing.');
+  const runtime = document.getElementById('runtime').textContent;
+  const json = JSON.stringify(data).replace(/</g, '\\u003c');
+  return [
+    '<!DOCTYPE html>',
+    COMMENT,
+    '  Sealed letter',
+    '',
+    '  This file holds an encrypted message and the code to open it, and',
+    '  nothing else. Open it in a web browser and enter ' + ways.join(', or ') + '.',
+    '',
+    '  The message is encrypted with AES-256-GCM under a random key.',
+    ...locks,
+    '',
+    '  Nothing is sent anywhere. The Content-Security-Policy below stops this',
+    '  page from fetching or loading anything, the page has no links, and all',
+    '  of its code is in this file for anyone to read. Anyone who has the file',
+    '  can try to guess the passphrase, though, so keep it somewhere private.',
+    '',
+    '  On iPhone and iPad, an emailed .html file may open in a preview that',
+    '  doesn\'t run scripts. Save it to Files and open it in Safari.',
+    '',
+    '  Made with the sealed letter app from porta-pages:',
+    '  https://github.com/ethanmdavidson/porta-pages',
+    '',
+    '  Open this file with #test at the end of the URL to run the built-in',
+    '  self-test of its code and show the results on the page.',
+    '-->',
+    '<html lang="en">',
+    '<head>',
+    '<meta charset="utf-8">',
+    '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\'; style-src \'unsafe-inline\'; base-uri \'none\'; form-action \'none\'">',
+    '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">',
+    '<meta name="robots" content="noindex">',
+    '<title>Sealed letter</title>',
+    '<style>' + LETTER_STYLE + '</style>',
+    '</head>',
+    '<body>' + LETTER_BODY,
+    SCRIPT + ' type="application/json" id="sealed">' + json + END_SCRIPT,
+    SCRIPT + ' id="runtime">' + runtime + END_SCRIPT,
+    '</body>',
+    '</html>',
+    '',
+  ].join('\n');
+}
+
+function fileName(label) {
+  const slug = label.normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48).replace(/-+$/, '');
+  return (slug || 'sealed-letter') + '.html';
+}
+
+/* ===================== THE COMPOSER ===================== */
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const status = (text, cls) => { $('status').textContent = text; $('status').className = cls || ''; };
+  let downloadUrl;
+
+  function syncOptions() {
+    $('pass-fields').hidden = !$('use-pass').checked;
+    $('share-fields').hidden = !$('use-shares').checked;
+  }
+  $('use-pass').addEventListener('change', syncOptions);
+  $('use-shares').addEventListener('change', syncOptions);
+  syncOptions();
+  $('show-pass').addEventListener('change', () => { $('pass').type = $('pass2').type = $('show-pass').checked ? 'text' : 'password'; });
+  $('suggest').addEventListener('click', () => {
+    // 20 base32 characters: 100 random bits.
+    const p = SL.toB32(SL.rand(13)).slice(0, 20).match(/.{4}/g).join('-');
+    $('pass').value = $('pass2').value = p;
+    $('show-pass').checked = true; $('pass').type = $('pass2').type = 'text';
+    status('Write this passphrase down somewhere safe before you seal the letter: it can’t be recovered.', 'warn');
+  });
+
+  function problem() {
+    const usePass = $('use-pass').checked, useShares = $('use-shares').checked;
+    if (!$('message').value.trim()) return ['message', 'Write a message first.'];
+    if (!usePass && !useShares) return ['use-pass', 'Choose at least one way to open the letter.'];
+    if (usePass) {
+      const p = $('pass').value;
+      if (p.length < 10) return ['pass', 'Use a passphrase of at least 10 characters, and preferably much longer.'];
+      if (p !== $('pass2').value) return ['pass2', 'The two passphrases don’t match.'];
+    }
+    if (useShares) {
+      const n = +$('n').value, k = +$('k').value;
+      if (!Number.isInteger(n) || n < 2 || n > 16) return ['n', 'Make between 2 and 16 cards.'];
+      if (!Number.isInteger(k) || k < 2 || k > n) return ['k', 'The number of cards needed must be between 2 and ' + n + '.'];
+    }
+    return null;
+  }
+
+  async function sealIt() {
+    const p = problem();
+    if (p) { status(p[1], 'error'); $(p[0]).focus(); return; }
+    if (!(window.crypto && crypto.subtle)) { status('This browser only allows encryption on https:// pages or files on disk. Open this page from one of those.', 'error'); return; }
+    const opts = {
+      label: $('label').value.trim(), message: $('message').value,
+      passphrase: $('use-pass').checked ? $('pass').value : '',
+      n: $('use-shares').checked ? +$('n').value : 0, k: $('use-shares').checked ? +$('k').value : 0,
+    };
+    $('seal').disabled = true;
+    status('Sealing… deriving a key from the passphrase takes a moment.');
+    try {
+      const { data, shares } = await SL.seal(opts);
+      // Open the new letter the way its readers will, before offering it.
+      const checks = [];
+      if (data.pass) {
+        if (await SL.openWithPassphrase(data, opts.passphrase) !== opts.message) throw new Error('the passphrase didn’t open it');
+        checks.push('with the passphrase');
+      }
+      if (data.shares) {
+        const decoded = await Promise.all(shares.map(SL.decodeShare));
+        if (await SL.openWithShares(data, decoded.slice(0, data.shares.k)) !== opts.message) throw new Error('the first shares didn’t open it');
+        if (await SL.openWithShares(data, decoded.slice(-data.shares.k)) !== opts.message) throw new Error('the last shares didn’t open it');
+        checks.push('with share cards 1 to ' + data.shares.k + ', and with cards ' + (data.shares.n - data.shares.k + 1) + ' to ' + data.shares.n);
+      }
+      const name = fileName(opts.label);
+      if (downloadUrl) URL.revokeObjectURL(downloadUrl);
+      downloadUrl = URL.createObjectURL(new Blob([letterHtml(data)], { type: 'text/html' }));
+      $('download').href = downloadUrl;
+      $('download').download = name;
+      $('checked').textContent = 'Checked: the letter opens ' + checks.join(' and ') + '.';
+      $('file-hint').textContent = 'It saves as ' + name + '. Saving again makes another copy of the same letter.';
+      renderCards(data, shares, name);
+      $('compose').hidden = true; $('result').hidden = false;
+      status('');
+      $('download').focus();
+    } catch (e) {
+      status('Something went wrong, so nothing was sealed: ' + e.message + '.', 'error');
+    }
+    $('seal').disabled = false;
+  }
+
+  function renderCards(data, shares, name) {
+    $('cards').replaceChildren();
+    $('cards-section').hidden = !shares.length;
+    shares.forEach((code, i) => {
+      const card = document.createElement('article'), el = (tag, cls, text) => {
+        const e = document.createElement(tag); e.className = cls; if (text) e.textContent = text; card.append(e); return e;
+      };
+      card.className = 'card';
+      el('div', 'head', 'Share ' + (i + 1) + ' of ' + data.shares.n + ' · any ' + data.shares.k + ' open the letter');
+      el('div', 'label', data.label || 'A sealed letter');
+      card.append(QR.svg(code, 'QR code of share ' + (i + 1)));
+      el('p', 'code', SL.groupCode(code));
+      el('p', 'note', 'This card is one piece of the key to a sealed letter, saved as ' + name + '. On its own it reveals nothing. To read the letter, open that file in a web browser and enter the codes from any ' + data.shares.k + ' of its cards. Letter ' + data.id + '.');
+      $('cards').append(card);
+    });
+  }
+
+  $('compose').addEventListener('submit', (e) => { e.preventDefault(); sealIt(); });
+  $('print').addEventListener('click', () => window.print());
+  $('again').addEventListener('click', () => {
+    if (downloadUrl) URL.revokeObjectURL(downloadUrl);
+    downloadUrl = undefined;
+    ['label', 'message', 'pass', 'pass2'].forEach((id) => { $(id).value = ''; });
+    $('cards').replaceChildren();
+    $('result').hidden = true; $('compose').hidden = false;
+    $('message').focus();
+  });
+})();
+
+/* ===================== SELF TEST (runs only with #test) ===================== */
+async function composerTests(t) {
+  const ok = t.ok, same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+  // Reed-Solomon: the worked "HELLO WORLD" example, version 1-M.
+  const hello = [32, 91, 11, 120, 209, 114, 220, 77, 67, 64, 236, 17, 236, 17, 236, 17];
+  const ec = QR.rsRemainder(hello, QR.rsDivisor(10));
+  ok(same(Array.from(ec), [196, 35, 39, 119, 235, 215, 231, 226, 93, 23]), 'Reed-Solomon codewords for HELLO WORLD', Array.from(ec));
+  // Format and version information against the tables in the QR spec.
+  ok(QR.formatBits(0) === 0b101010000010010, 'format bits for M, mask 0');
+  ok(QR.formatBits(5) === 0b100000011001110, 'format bits for M, mask 5', QR.formatBits(5).toString(2));
+  ok(QR.formatBits(7) === 0b100101010100000, 'format bits for M, mask 7', QR.formatBits(7).toString(2));
+  ok(QR.versionBits(7) === 0b000111110010010100, 'version bits for version 7', QR.versionBits(7).toString(2));
+  ok(QR.versionBits(10) === 0b001010010011010011, 'version bits for version 10', QR.versionBits(10).toString(2));
+  // A share code fits in version 5, and every symbol has its three finder patterns.
+  const share = SL.toB32(SL.rand(41));
+  ok(QR.codewords(share).v === 5, 'a share code fits in a version 5 QR code', QR.codewords(share).v);
+  for (const len of [1, 30, 100, 200]) {
+    const m = QR.encode('x'.repeat(len)), n = m.length;
+    const finder = (x0, y0) => [0, 1, 2, 3, 4, 5, 6].every((d) => m[y0][x0 + d] && m[y0 + 6][x0 + d] && m[y0 + d][x0] && m[y0 + d][x0 + 6]) && m[y0 + 3][x0 + 3] && !m[y0 + 1][x0 + 1];
+    ok((n - 17) % 4 === 0 && finder(0, 0) && finder(n - 7, 0) && finder(0, n - 7), 'QR code of ' + len + ' bytes has a valid size and finder patterns', n);
+    ok(m[n - 8][8] === 1, 'QR code of ' + len + ' bytes has its dark module');
+  }
+  let tooLong = '';
+  try { QR.encode('x'.repeat(300)); } catch (e) { tooLong = e.message; }
+  ok(/too long/.test(tooLong), 'text too long for version 10 is refused');
+  // File names
+  ok(fileName('For Sam, if something happens to me') === 'for-sam-if-something-happens-to-me.html', 'file name from a label', fileName('For Sam, if something happens to me'));
+  ok(fileName('') === 'sealed-letter.html' && fileName('✉️') === 'sealed-letter.html', 'file name without a usable label');
+  ok(fileName('Café notes') === 'cafe-notes.html', 'file name drops accents', fileName('Café notes'));
+  // The letter file follows the same conventions as the apps in the repo (see tools/tests/static.spec.js).
+  const { data } = await SL.seal({ label: 'Hi <\/script><b>', message: 'zq-plaintext-marker', passphrase: 'pass phrase 1', k: 2, n: 3, iterations: 1000 });
+  const html = letterHtml(data);
+  const markup = html.replace(/(<script\b[^>]*>)[\s\S]*?<\/script>/gi, '$1<\/script>').replace(/(<style\b[^>]*>)[\s\S]*?<\/style>/gi, '$1</style>');
+  const js = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].map((x) => x[1]).join('\n');
+  ok(/^<!DOCTYPE html>\n<!-{2}[\s\S]*?\S[\s\S]*?-->/.test(html), 'the letter starts with a header comment');
+  const csp = /<meta\s+http-equiv=["']Content-Security-Policy["']\s+content=(["'])(.*?)\1/i.exec(markup);
+  ok(csp && csp[2].includes("default-src 'none'") && csp.index < markup.search(/<(script|style|link)\b/i), 'the letter declares default-src \'none\' before any script or style');
+  ok(!/<script\b[^>]*\bsrc\s*=/i.test(markup) && !/<link\b/i.test(markup) && !/<a\b/i.test(markup), 'the letter loads nothing and links nowhere');
+  ok(!html.includes('\r') && !/[ \t]$/m.test(html) && html.endsWith('\n'), 'the letter has LF line endings, no trailing whitespace and a final newline');
+  ok(/\bwindow\.portaTestResult\s*=(?!=)/.test(js) && /\blocation\.hash\s*[!=]==?\s*(["'])#test\1/.test(js), 'the letter has a #test self-test');
+  ok((html.match(/<script\b/gi) || []).length === 2, 'the label can’t break out of the letter’s data', (html.match(/<script\b/gi) || []).length);
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const back = JSON.parse(doc.getElementById('sealed').textContent);
+  ok(back.label === 'Hi <\/script><b>' && back.ct === data.ct, 'the letter’s data reads back unchanged');
+  ok(doc.getElementById('runtime').textContent === document.getElementById('runtime').textContent, 'the letter carries this page’s runtime verbatim');
+  ok(!html.includes('zq-plaintext-marker'), 'the letter does not contain the message in the clear');
+  for (const id of ['label', 'intro', 'pass-form', 'pass', 'or', 'shares-form', 'shares-title', 'share-inputs', 'scan', 'scan-file', 'status', 'sealed-view', 'opened', 'message', 'copy', 'close', 'letter-id']) {
+    ok(doc.getElementById(id), 'the letter has #' + id);
+  }
+  return t;
+}
+
+if (location.hash === '#test') SL.runTests(composerTests);
+window.addEventListener('hashchange', () => { if (location.hash === '#test' && !window.portaTestResult) SL.runTests(composerTests); });
+</script>
+</body>
+</html>

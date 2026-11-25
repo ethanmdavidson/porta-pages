@@ -910,7 +910,7 @@
       const sources = await siteSources(site + 'workbench.html', fakeFetch(routes));
       eq(sources.map((x) => x.label), [site + 'index.html', site + 'a.html', site + 'b.html'], 'site: index.html and each file next to it that it links to, once each');
       const loaded = await readAll(sources, false);
-      eq(loaded.results.map((r) => [r.name, r.label]), [['a.html', site + 'a.html'], ['index.html', site + 'index.html']], 'site: the files that loaded are checked and labelled with their URLs');
+      eq(loaded.results.map((r) => [r.name, r.label]), [['a.html', site + 'a.html'], ['index.html', site + 'index.html']], 'site: the files that loaded are checked and labeled with their URLs');
       eq(loaded.errors, [code(site + 'b.html') + ': the server answered 404.'], 'site: a file that didn\'t load is reported');
       ok(check(loaded.results[1], 'index').notes.some((x) => x.level === 'warn' && /b\.html/.test(x.text)), 'site: the index link to a file that didn\'t load is a warning');
       ok(report(loaded.results, { date: '2026-01-01', agent: 'Test' }).split('\n').includes('## \u2713 ' + site + 'a.html'), 'report: a file from the web is named by its URL');

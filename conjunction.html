@@ -1,0 +1,2127 @@
+<!DOCTYPE html>
+<!--
+  Conjunction
+
+  A game of stalking a satellite. You are an autonomous interceptor in low
+  Earth orbit, sent to destroy one enemy satellite without letting it see
+  you coming. A mission ends when the target is destroyed or time runs out.
+
+  Orbits follow Newton's gravity in a single plane, seen from above the
+  North Pole with the Sun to the right. Altitudes are drawn stretched, so
+  orbits a few hundred kilometers apart can be told apart. A prograde burn
+  raises the far side of your orbit, and a higher orbit is a slower one, so
+  to catch up with a satellite ahead of you, burn retrograde.
+
+  Drag the burn pad to plan a burn. The dashed line is the orbit it would
+  give you, and "planned" is the closest it would take you to the target in
+  the next few orbits. Press Burn to make it. Speed time up with + and -, or
+  skip ahead to your next apoapsis, periapsis, closest approach or change of
+  light. Fire an interceptor from within 5 km.
+
+  The target grows suspicious when it can sense you: in sunlight (unless the
+  Sun or the Earth is behind you), by your heat, by your engine plumes, and
+  up close by radar, whose range your jammer can cut for as long as the
+  battery lasts. In Earth's shadow you run on battery. Once alerted, the
+  target dodges, and its decoys draw off any interceptor that takes too long
+  to arrive.
+
+  Keyboard: arrow keys or WASD plan a burn (hold Shift for bigger steps),
+  Enter burns and Backspace clears the plan, G switches engines, J toggles
+  the jammer, F fires, Space pauses, + and - change the time warp, 1 to 4
+  skip ahead, V switches views, Escape opens the menu.
+
+  Your best rating for each mission is saved in localStorage.
+
+  Open this file with #test at the end of the URL to run the built-in
+  self-test of the orbital mechanics, sensors and game rules, and show the
+  results on the page. The test leaves saved ratings alone.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#04060b">
+<title>Conjunction</title>
+<meta name="description" content="Fly an autonomous killer satellite in low Earth orbit: spend propellant wisely, stay out of sight, and get close enough to strike.">
+<style>
+  :root {
+    --bg: #04060b; --panel: #090e16; --raise: #111a28; --line: #1b2636; --line-2: #2c3b53;
+    --ink: #dbe4ee; --dim: #8d9cb2; --faint: #5d6c82;
+    --you: #55d6ea; --tgt: #ff6b57; --sun: #ffd36b; --ok: #71d394; --warn: #ffb547; --bad: #ff5d5d;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --sat: env(safe-area-inset-top, 0px); --sab: env(safe-area-inset-bottom, 0px);
+    --sal: env(safe-area-inset-left, 0px); --sar: env(safe-area-inset-right, 0px);
+    color-scheme: dark;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--ink); font: 14px/1.35 var(--sans);
+    overflow: hidden; -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent; touch-action: manipulation;
+  }
+  button { font: inherit; color: inherit; }
+  #app { height: 100vh; height: 100dvh; display: flex; flex-direction: column; }
+
+  /* ---------- the view, with its read-outs laid over it ---------- */
+  #stage { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+  #view { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  .hud { position: absolute; font: 12px/1.4 var(--mono); text-shadow: 0 1px 2px #000, 0 0 6px #000; pointer-events: none; }
+  .hud button { pointer-events: auto; }
+  #hud-tl { top: calc(var(--sat) + 8px); left: calc(var(--sal) + 10px); }
+  #hud-tl b { font-weight: 600; }
+  #hud-tl .sub { color: var(--dim); }
+  #light[data-lit="false"] { color: #9fb2ff; }
+  #hud-tr { top: calc(var(--sat) + 6px); right: calc(var(--sar) + 8px); display: flex; gap: 6px; align-items: flex-start; }
+  #hud-det { top: calc(var(--sat) + 44px); left: calc(var(--sal) + 10px); right: calc(var(--sar) + 10px); }
+  .meter { position: relative; height: 6px; background: rgba(255, 255, 255, 0.08); border-radius: 3px; overflow: hidden; max-width: 420px; }
+  .meter i { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--ok); }
+  .meter .tick { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(255, 255, 255, 0.45); }
+  #det-line { margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #det-state { font-weight: 600; }
+  #det[data-level="0"] #det-state { color: var(--ok); }
+  #det[data-level="1"] #det-state { color: var(--warn); }
+  #det[data-level="2"] #det-state { color: var(--bad); }
+  #det[data-level="1"] .meter i { background: var(--warn); }
+  #det[data-level="2"] .meter i { background: var(--bad); }
+  #det-why { color: var(--dim); }
+  #toast {
+    top: calc(var(--sat) + 80px); left: 50%; transform: translateX(-50%); width: max-content; max-width: min(92%, 560px);
+    padding: 5px 10px; border-radius: 6px; background: rgba(9, 14, 22, 0.82); border: 1px solid var(--line-2);
+    font: 13px/1.35 var(--sans); text-align: center; text-shadow: none; transition: opacity 0.3s;
+  }
+  #toast:empty { opacity: 0; }
+  #toast[data-tone="warn"] { border-color: var(--warn); }
+  #toast[data-tone="bad"] { border-color: var(--bad); }
+  #toast[data-tone="ok"] { border-color: var(--ok); }
+  #toast[data-tone="hint"] { background: none; border-color: transparent; color: var(--dim); font-size: 12px; text-shadow: 0 1px 2px #000, 0 0 6px #000; }
+  #hud-bl { bottom: 10px; left: calc(var(--sal) + 10px); right: 120px; }
+  #hud-bl .k { color: var(--dim); display: inline-block; min-width: 4.8em; }
+  #r-strike[data-hit="true"] b { color: var(--ok); }
+  #r-strike[data-hit="false"] b { color: var(--warn); }
+  #hud-br { bottom: 10px; right: calc(var(--sar) + 10px); display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+
+  /* ---------- buttons ---------- */
+  .btn {
+    min-height: 38px; padding: 0 10px; border: 1px solid var(--line-2); border-radius: 6px;
+    background: var(--raise); color: var(--ink); font: 13px/1 var(--sans); cursor: pointer; touch-action: manipulation;
+  }
+  .btn:disabled { opacity: 0.38; cursor: default; }
+  .btn:active:not(:disabled) { filter: brightness(1.25); }
+  .btn:focus-visible { outline: 2px solid var(--you); outline-offset: 2px; }
+  .btn.primary { background: #17567f; border-color: #2a86bd; }
+  .btn.fire { min-width: 92px; min-height: 44px; background: #7d1d16; border-color: #d0402f; font-weight: 700; letter-spacing: 0.08em; }
+  .btn.fire:not(:disabled) { background: #b3291d; }
+  .btn[aria-pressed="true"] { background: #1d3d5d; border-color: var(--you); }
+  .seg { display: inline-flex; }
+  .seg .btn { border-radius: 0; }
+  .seg .btn:first-child { border-radius: 6px 0 0 6px; }
+  .seg .btn:last-child { border-radius: 0 6px 6px 0; margin-left: -1px; }
+  #hud-tr .btn { min-height: 32px; background: rgba(17, 26, 40, 0.85); }
+  #hud-br .btn { text-shadow: none; }
+  #btn-jam[aria-pressed="true"] { border-color: var(--warn); background: #4a3412; }
+
+  /* ---------- the control panel ---------- */
+  #panel {
+    flex: none; display: grid; gap: 8px 10px; grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas: "res res" "pad ctl" "time time";
+    padding: 8px calc(var(--sar) + 10px) calc(var(--sab) + 8px) calc(var(--sal) + 10px);
+    background: var(--panel); border-top: 1px solid var(--line);
+  }
+  #res { grid-area: res; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+  .res {
+    display: grid; gap: 3px; padding: 4px 6px; border: 1px solid transparent; border-radius: 6px;
+    background: none; text-align: left; font: 11px/1.2 var(--sans); color: var(--ink);
+  }
+  button.res { cursor: pointer; border-color: var(--line); }
+  button.res[aria-pressed="true"] { border-color: var(--you); background: #0f2233; }
+  button.res:focus-visible { outline: 2px solid var(--you); outline-offset: 1px; }
+  .res { min-width: 0; }
+  .res .k { color: var(--dim); text-transform: uppercase; letter-spacing: 0.06em; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .res b { font: 600 13px/1 var(--mono); }
+  .bar { display: block; height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--you); transform-origin: left; }
+  #pwr[data-low="true"] .bar i { background: var(--bad); }
+  #pwr[data-low="true"] b { color: var(--bad); }
+  #kv-v { color: var(--tgt); letter-spacing: 0.1em; }
+  #pad { grid-area: pad; width: 124px; height: 124px; touch-action: none; cursor: crosshair; border-radius: 50%; }
+  #pad:focus-visible { outline: 2px solid var(--you); outline-offset: 2px; }
+  #burnctl { grid-area: ctl; display: grid; gap: 5px; align-content: center; min-width: 0; }
+  .axis { display: grid; grid-template-columns: 2.6em 38px minmax(3.6em, 1fr) 38px; gap: 4px; align-items: center; }
+  .axis .k { color: var(--dim); font: 11px/1 var(--sans); text-transform: uppercase; letter-spacing: 0.05em; }
+  .axis output { text-align: center; font: 600 14px/1 var(--mono); }
+  .axis .btn { min-height: 32px; padding: 0; font: 18px/1 var(--mono); }
+  #dv-info { font: 11px/1.3 var(--mono); color: var(--dim); min-height: 2.6em; }
+  #dv-info .bad { color: var(--bad); }
+  .burnbtns { display: grid; grid-template-columns: 1fr 1.6fr; gap: 6px; }
+  #timectl { grid-area: time; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; }
+  #timectl .btn { min-width: 0; padding: 0 4px; }
+  #warp-v { align-self: center; text-align: center; font: 600 13px/1 var(--mono); }
+
+  #legend { display: none; grid-column: 1 / -1; margin: 6px 0 0; font: 12px/1.5 var(--sans); color: var(--dim); }
+  #legend p { margin: 0 0 6px; }
+  #legend i { font-style: normal; font-weight: 600; }
+  @media (orientation: landscape) and (min-width: 720px) {
+    #app { flex-direction: row; }
+    #panel {
+      width: 340px; overflow-y: auto; align-content: start; border-top: 0; border-left: 1px solid var(--line);
+      padding: calc(var(--sat) + 12px) calc(var(--sar) + 12px) calc(var(--sab) + 12px) 12px;
+      grid-template-areas: "res res" "pad ctl" "time time" "legend legend";
+    }
+    #res { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (orientation: landscape) and (min-width: 720px) and (min-height: 640px) {
+    #legend { display: block; grid-area: legend; }
+  }
+  @media (max-height: 700px) and (orientation: portrait) {
+    #panel { gap: 6px 8px; padding-top: 6px; }
+    #pad { width: 108px; height: 108px; }
+    .btn { min-height: 34px; }
+    .axis .btn { min-height: 30px; }
+  }
+  @media (max-width: 400px) {
+    .hud { font-size: 11px; }
+    #hud-bl { right: 108px; }
+    .btn.fire { min-width: 84px; }
+  }
+  @media (max-height: 520px) and (orientation: landscape) {
+    #panel { gap: 6px 8px; }
+    #pad { width: 112px; height: 112px; }
+  }
+
+  /* ---------- dialogs ---------- */
+  dialog {
+    width: min(540px, calc(100% - 24px)); max-height: calc(100% - 24px); padding: 18px 20px 16px; overflow: auto;
+    border: 1px solid var(--line-2); border-radius: 10px; background: var(--panel); color: var(--ink);
+    -webkit-user-select: text; user-select: text;
+  }
+  dialog::backdrop { background: rgba(2, 4, 8, 0.75); }
+  dialog h1 { margin: 0; font: 600 28px/1.1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--you); }
+  dialog h2 { margin: 0 0 8px; font: 600 19px/1.2 var(--sans); }
+  dialog h2:focus { outline: none; }
+  dialog h3 { margin: 16px 0 4px; font: 600 14px/1.2 var(--sans); color: var(--you); }
+  dialog p, dialog li { color: #c3cfdc; line-height: 1.5; }
+  dialog p { margin: 8px 0; }
+  .lede { color: var(--dim); }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+  .row .btn { min-height: 42px; padding: 0 16px; font-size: 15px; }
+  #missions { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 8px; }
+  .mission {
+    display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; width: 100%; padding: 10px 12px; text-align: left;
+    border: 1px solid var(--line-2); border-radius: 8px; background: var(--raise); cursor: pointer;
+  }
+  .mission:hover, .mission:focus-visible { border-color: var(--you); outline: none; }
+  .mission .mname { font-weight: 600; }
+  .mission .mstars { color: var(--sun); letter-spacing: 0.1em; font-family: var(--mono); }
+  .mission .mdesc { grid-column: 1 / -1; color: var(--dim); font-size: 13px; }
+  dl.intel { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; margin: 12px 0 0; font-size: 14px; }
+  dl.intel dt { color: var(--dim); }
+  dl.intel dd { margin: 0; }
+  #d-stars { list-style: none; padding: 0; margin: 10px 0; }
+  #d-stars li { padding: 2px 0; }
+  #d-stars .got { color: var(--sun); }
+  #d-stars .miss { color: var(--faint); }
+  #dlg-help ul { padding-left: 1.2em; margin: 6px 0; }
+  #dlg-help dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 13px; }
+  #dlg-help dt { font-family: var(--mono); color: var(--you); }
+  #dlg-help dd { margin: 0; color: #c3cfdc; }
+  .menu-col { display: grid; gap: 8px; margin-top: 12px; }
+  .menu-col .btn { min-height: 44px; font-size: 15px; }
+
+  /* top, margin, width and height undo the popover defaults, which center it */
+  #test-report { position: fixed; top: auto; left: 12px; right: 12px; bottom: 12px; z-index: 10; margin: 0; width: auto; height: auto; max-height: 40vh; overflow: auto; padding: 10px 14px; border: 1px solid; background: var(--panel); font: 13px/1.4 var(--mono); white-space: pre-wrap; -webkit-user-select: text; user-select: text; }
+  #test-report.pass { color: var(--ok); }
+  #test-report.fail { color: var(--bad); }
+  @media (prefers-reduced-motion: reduce) { #toast { transition: none; } }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stage">
+    <canvas id="view" role="img" aria-label="Orbit view"></canvas>
+    <div id="hud-tl" class="hud">
+      <div><b id="clock">T+0:00</b> <span id="left" class="sub"></span></div>
+      <div><span id="warp-info"></span> · <span id="light" data-lit="true">Sunlit</span></div>
+    </div>
+    <div id="hud-tr" class="hud">
+      <div class="seg" role="group" aria-label="View">
+        <button id="v-orbit" class="btn" aria-pressed="true">Orbit</button>
+        <button id="v-close" class="btn" aria-pressed="false">Close-in</button>
+      </div>
+      <button id="btn-menu" class="btn" aria-label="Menu">Menu</button>
+    </div>
+    <div id="hud-det" class="hud">
+      <div id="det" data-level="0">
+        <div class="meter" aria-hidden="true"><i id="det-fill"></i><span class="tick" style="left: 40%"></span></div>
+        <div id="det-line"><span id="det-state">Unaware</span> <span id="det-pct">0%</span> <span id="det-why"></span></div>
+      </div>
+    </div>
+    <div id="toast" class="hud" role="status" aria-live="polite"></div>
+    <div id="hud-bl" class="hud">
+      <div id="r-seen" hidden><span class="k">Seen by</span><span id="i-seen"></span></div>
+      <div><span class="k">Target</span><b id="i-range">—</b> <span id="i-closing"></span></div>
+      <div><span class="k">Closest</span><b id="i-ca">—</b></div>
+      <div id="r-plan" hidden><span class="k">Planned</span><b id="i-plan">—</b></div>
+      <div id="r-strike" hidden><span class="k">Strike</span><b id="i-strike"></b></div>
+    </div>
+    <div id="hud-br" class="hud">
+      <button id="btn-jam" class="btn" aria-pressed="false">Jammer</button>
+      <button id="btn-fire" class="btn fire" disabled>FIRE</button>
+    </div>
+  </div>
+
+  <div id="panel">
+    <div id="res">
+      <button id="e-main" class="res" aria-pressed="true" aria-label="Main engine" title="Burn with the main engine (G)">
+        <span class="k">Main</span><span class="bar"><i id="main-bar"></i></span><b id="main-v">0</b>
+      </button>
+      <button id="e-gas" class="res" aria-pressed="false" aria-label="Cold gas thrusters" title="Burn with the cold-gas thrusters (G)">
+        <span class="k">Cold gas</span><span class="bar"><i id="gas-bar"></i></span><b id="gas-v">0</b>
+      </button>
+      <div id="pwr" class="res" data-low="false">
+        <span class="k">Battery</span><span class="bar"><i id="pwr-bar"></i></span><b id="pwr-v">100%</b>
+      </div>
+      <div class="res" title="Interceptors left">
+        <span class="k">Interceptors</span><span class="bar" style="visibility: hidden"></span><b id="kv-v"></b>
+      </div>
+    </div>
+    <canvas id="pad" tabindex="0" role="img" aria-label="Burn pad. Drag to plan a burn: right is prograde, left retrograde, up away from Earth, down toward it."></canvas>
+    <div id="burnctl">
+      <div class="axis"><span class="k" title="Prograde (+) or retrograde (−)">Pro</span><button class="btn step" data-axis="pro" data-dir="-1" aria-label="Less prograde">−</button><output id="pro-v">0.0</output><button class="btn step" data-axis="pro" data-dir="1" aria-label="More prograde">+</button></div>
+      <div class="axis"><span class="k" title="Away from Earth (+) or toward it (−)">Out</span><button class="btn step" data-axis="out" data-dir="-1" aria-label="Less outward">−</button><output id="out-v">0.0</output><button class="btn step" data-axis="out" data-dir="1" aria-label="More outward">+</button></div>
+      <div id="dv-info"></div>
+      <div class="burnbtns"><button id="btn-clear" class="btn">Clear</button><button id="btn-burn" class="btn primary" disabled>Burn</button></div>
+    </div>
+    <div id="timectl">
+      <button id="btn-pause" class="btn" aria-label="Pause">Pause</button>
+      <button id="btn-slower" class="btn" aria-label="Slower">−</button>
+      <output id="warp-v">×1</output>
+      <button id="btn-faster" class="btn" aria-label="Faster">+</button>
+      <button class="btn" data-skip="apo" title="Skip to apoapsis (1)">Apo</button>
+      <button class="btn" data-skip="peri" title="Skip to periapsis (2)">Peri</button>
+      <button class="btn" data-skip="ca" title="Skip to a minute before closest approach (3)">Closest</button>
+      <button class="btn" data-skip="shade" title="Skip to the next change of light (4)">Shadow</button>
+    </div>
+    <div id="legend">
+      <p><i style="color: var(--you)">Cyan</i> is you, <i style="color: var(--tgt)">red</i> the target, and the dashed white line the orbit a planned burn would give you. A ring marks a closest approach.</p>
+      <p>In the close-in view, the target is at the center, the direction it travels is to the right, and up is away from Earth. The dashed shape is how close it would let you come, from each direction, before noticing you, colored by what would notice you there: <i style="color: #ffd36b">cameras</i>, <i style="color: #ff7a5c">infrared</i>, <i style="color: #b99bff">radar</i>, or the <i style="color: #ff9ad5">jammer</i> being heard. The cyan dotted ring is your strike range.</p>
+      <p>Keys: arrows plan a burn, Enter burns, Space pauses, + and − set the warp, 1–4 skip ahead, F fires, J jams, G switches engines, V switches views.</p>
+    </div>
+  </div>
+
+  <dialog id="dlg-title" aria-labelledby="t-h">
+    <h1 id="t-h">Conjunction</h1>
+    <p class="lede">You are an autonomous interceptor in low Earth orbit. Your orders: destroy one satellite, and don't let it see you coming.</p>
+    <ol id="missions"></ol>
+    <div class="row"><button id="t-help" class="btn">How to play</button><button id="t-resume" class="btn primary" hidden>Resume</button></div>
+  </dialog>
+
+  <dialog id="dlg-brief" aria-labelledby="b-h">
+    <h2 id="b-h"></h2>
+    <div id="b-text"></div>
+    <dl id="b-intel" class="intel"></dl>
+    <div class="row"><button id="b-back" class="btn">Back</button><button id="b-go" class="btn primary" autofocus>Launch</button></div>
+  </dialog>
+
+  <dialog id="dlg-menu" aria-labelledby="m-h">
+    <h2 id="m-h">Paused</h2>
+    <p id="m-mission" class="lede"></p>
+    <div class="menu-col">
+      <button id="m-resume" class="btn primary" autofocus>Resume</button>
+      <button id="m-help" class="btn">How to play</button>
+      <button id="m-restart" class="btn">Restart mission</button>
+      <button id="m-missions" class="btn">Missions</button>
+    </div>
+  </dialog>
+
+  <dialog id="dlg-help" aria-labelledby="h-h">
+    <h2 id="h-h" tabindex="-1" autofocus>How to play</h2>
+    <h3>Orbits</h3>
+    <p>Everything here obeys orbital mechanics. A prograde burn, along your direction of travel, raises the far side of your orbit, and a higher orbit is a slower one. So to catch a target ahead of you in the same orbit, burn retrograde: you drop into a lower, faster orbit and gain on it every lap. To reach a higher target, burn prograde when it is a little ahead of you, and coast half an orbit up to it (a Hohmann transfer).</p>
+    <h3>Planning a burn</h3>
+    <p>Drag the burn pad, or use the + and − buttons. Right is prograde, left retrograde, up away from Earth, down toward it. The dashed line is the orbit the burn would give you, and Planned is the closest it would bring you to the target in the next few orbits. Nothing happens until you press Burn, and the burn is made at that moment, so you can leave a burn planned, let time run, and watch for the moment it lines up.</p>
+    <p>The main engine has plenty of propellant but a bright plume. The cold-gas thrusters are nearly invisible, but carry little. Tap Main or Cold gas to choose.</p>
+    <h3>Time</h3>
+    <p>Use + and − to speed time up, to 1000 times. Apo, Peri, Closest and Shadow skip ahead and pause. Time slows down by itself when the target is near, and, with a burn planned, as its window opens; it pauses at the window's best moment.</p>
+    <h3>Staying hidden</h3>
+    <p>The target's suspicion rises while it can sense you, and slowly falls when it can't. In the close-in view, a dashed shape shows how close you could come, from each direction, before it noticed, and its color says which sensor would notice you first: yellow for cameras, red for infrared, violet for radar, pink for your jammer being heard. Switch the jammer on and the violet shrinks, but pink can take its place.</p>
+    <ul>
+      <li><b>Sunlight</b>: its cameras see you when you are lit. Earth's shadow hides you, and so does the Sun's glare, if you come at it with the Sun behind you.</li>
+      <li><b>The Earth behind you</b>: against the Earth below, you are much harder to pick out than against black space.</li>
+      <li><b>Heat</b>: you glow faintly in infrared all the time.</li>
+      <li><b>Plumes</b>: main-engine burns near the target are bright.</li>
+      <li><b>Radar</b>: some targets have radar, which works in the dark but only up close. Your jammer cuts its range to a quarter, but it drains the battery, and the target can hear the jamming within about 3 km.</li>
+    </ul>
+    <p>At 40% the target is suspicious and looks harder. At 100% it is alerted for good: it dodges when you come near, and its decoys are ready.</p>
+    <h3>Power</h3>
+    <p>Your solar panels charge the battery in sunlight. In Earth's shadow you run on it. If it goes flat you can't burn, jam or fire until it recovers.</p>
+    <h3>Striking</h3>
+    <p>Fire an interceptor from within 5 km. It needs time to get there, and if the target reacts first, its decoys draw the shot off. An unaware target takes 20 seconds to react, a suspicious one 12, an alerted one 5. Get close, or fire while closing fast. A target with no decoys left can't stop a shot.</p>
+    <h3>Rating</h3>
+    <p>One star for destroying the target, one for never alerting it, and one for using no more propellant than the mission's par.</p>
+    <h3>Keyboard</h3>
+    <dl>
+      <dt>← → ↑ ↓, WASD</dt><dd>plan a burn, 0.1 m/s at a time (Shift: 1 m/s)</dd>
+      <dt>Enter</dt><dd>burn</dd>
+      <dt>Backspace</dt><dd>clear the plan</dd>
+      <dt>G</dt><dd>switch engines</dd>
+      <dt>J</dt><dd>jammer</dd>
+      <dt>F</dt><dd>fire</dd>
+      <dt>Space</dt><dd>pause</dd>
+      <dt>+ −</dt><dd>time warp</dd>
+      <dt>1 2 3 4</dt><dd>skip to apoapsis, periapsis, closest approach, change of light</dd>
+      <dt>V</dt><dd>orbit or close-in view</dd>
+      <dt>Esc</dt><dd>menu</dd>
+    </dl>
+    <div class="row"><button id="h-close" class="btn primary">Close</button></div>
+  </dialog>
+
+  <dialog id="dlg-debrief" aria-labelledby="d-h">
+    <h2 id="d-h"></h2>
+    <p id="d-text"></p>
+    <ul id="d-stars"></ul>
+    <dl id="d-stats" class="intel"></dl>
+    <div class="row"><button id="d-missions" class="btn">Missions</button><button id="d-retry" class="btn">Retry</button><button id="d-next" class="btn primary" autofocus>Next mission</button></div>
+  </dialog>
+</div>
+
+<script>
+/* ============ CORE: orbital mechanics, the target's sensors and the rules ============
+   Nothing in here touches the page, so the self-test can fly whole missions with it. */
+const CORE = (function () {
+  'use strict';
+
+  const MU = 398600.4418;          // km³/s², Earth's gravitational parameter
+  const RE = 6371;                 // km, Earth's mean radius
+  const TAU = 2 * Math.PI, DEG = Math.PI / 180;
+  const SUN = [1, 0];              // toward the Sun. It moves about 1° a day, so it stays put for a mission.
+  const ATMOS = 100;               // km: any lower and you burn up
+  const STRIKE = 5;                // km: an interceptor's seeker locks on from this range
+  const KV_SPEED = 150;            // m/s: how fast an interceptor leaves you
+  const REACT = [20, 12, 5];       // s the target needs to deploy decoys: unaware, suspicious, alerted
+  const RAM = 0.02;                // km: any closer and the two satellites collide
+  const SUSPECT_AT = 40, CALM_AT = 30;   // % suspicion
+  const GAIN = [1, 1.5, 1.5];      // a suspicious target looks harder
+  // The target's sensors. With standard sensors, each notices you within its range (km): its cameras when you are
+  // in sunlight, its infrared always, its radar, and its receivers hear your jamming. Inside a range, suspicion
+  // rises, faster the closer you are (as 1/d², radar as 1/d⁴); outside every range it fades by DECAY % a second.
+  const SEE_SUN = 20, SEE_HEAT = 5, SEE_RADAR = 6, HEAR_JAM = 3, DECAY = 0.25;
+  // Cover multiplies a rate: the Earth behind you halves the cameras' and infrared's range, the Sun behind you cuts
+  // the cameras' to a fifth and the infrared's to a half, and jamming cuts the radar's to a quarter.
+  const EARTH_BG = 1 / 4, GLARE_OPT = 1 / 25, GLARE_IR = 1 / 4, JAM_CUT = 1 / 256, GLARE = 15 * DEG;
+  const K_PLUME = 3, K_GAS = 0.15;   // % suspicion per m/s of a burn seen from 10 km: the main engine, cold gas
+  const CHARGE = 0.06, BASE = 0.02, JAM_DRAW = 0.25, RECOVER = 10;   // % of battery per second; % to restart
+  const EVADE_NEAR = 25, EVADE_GAP = 600;   // an alerted target dodges a pass closer than this (km), this often (s)
+
+  const sub = (a, b) => [a[0] - b[0], a[1] - b[1]];
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1];
+  const cross = (a, b) => a[0] * b[1] - a[1] * b[0];
+  const len = a => Math.hypot(a[0], a[1]);
+
+  // A small seeded random number generator (mulberry32), so missions and debris come out the same every time.
+  function rng(seed) {
+    return function () {
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  // ---------- orbits ----------
+  // An orbit is a state at an epoch, { r: [km], v: [km/s], t: s }. propagate() solves Kepler's equation from the
+  // epoch with Lagrange's f and g functions, so a position is exact however far ahead it is, at any time warp.
+  function propagate(o, t) {
+    const x0 = o.r[0], y0 = o.r[1], vx = o.v[0], vy = o.v[1];
+    const r0 = Math.hypot(x0, y0), alpha = 2 / r0 - (vx * vx + vy * vy) / MU;   // 1/a
+    // An unbound orbit needs far more propellant than any mission carries; drift in a straight line rather than fail.
+    if (!(alpha > 1e-7)) return { r: [x0 + vx * (t - o.t), y0 + vy * (t - o.t)], v: [vx, vy] };
+    const a = 1 / alpha, n = Math.sqrt(MU * alpha * alpha * alpha);
+    const dt = (t - o.t) % (TAU / n);
+    const sig = (x0 * vx + y0 * vy) / Math.sqrt(MU), sa = Math.sqrt(a);
+    const es = sig / sa, ec = 1 - r0 / a;   // e·sin E0 and e·cos E0
+    const M = n * dt;
+    let E = M;
+    for (let i = 0; i < 50; i++) {
+      const s = Math.sin(E), c = Math.cos(E);
+      const step = (E + es * (1 - c) - ec * s - M) / (1 + es * s - ec * c);
+      E -= step;
+      if (Math.abs(step) < 1e-12) break;
+    }
+    const s = Math.sin(E), c = Math.cos(E);
+    const r = a + (r0 - a) * c + sig * sa * s;
+    const f = 1 - a / r0 * (1 - c), g = dt - (E - s) / n;
+    const fd = -Math.sqrt(MU * a) / (r * r0) * s, gd = 1 - a / r * (1 - c);
+    return { r: [f * x0 + g * vx, f * y0 + g * vy], v: [fd * x0 + gd * vx, fd * y0 + gd * vy] };
+  }
+
+  // Size, shape and timing: a and the apsis radii in km, n in rad/s, P in s, w the direction of periapsis,
+  // M0 the mean anomaly at the epoch.
+  function elements(o) {
+    const x = o.r[0], y = o.r[1], vx = o.v[0], vy = o.v[1];
+    const r = Math.hypot(x, y), v2 = vx * vx + vy * vy, rv = x * vx + y * vy;
+    const a = 1 / (2 / r - v2 / MU), k = v2 - MU / r;
+    const ex = (k * x - rv * vx) / MU, ey = (k * y - rv * vy) / MU, e = Math.hypot(ex, ey);
+    const n = Math.sqrt(MU / (a * a * a));
+    const es = rv / Math.sqrt(MU * a), E0 = Math.atan2(es, 1 - r / a);
+    return { a, e, n, P: TAU / n, rp: a * (1 - e), ra: a * (1 + e), w: Math.atan2(ey, ex), M0: E0 - es };
+  }
+
+  // An orbit from altitudes (km) and angles (degrees counterclockwise from the Sun direction): alt for a circular
+  // orbit, or peri, apo and w, the direction of periapsis; at is where the satellite is at time t.
+  function orbitFrom(spec, t) {
+    const rp = RE + (spec.alt !== undefined ? spec.alt : spec.peri);
+    const ra = RE + (spec.alt !== undefined ? spec.alt : spec.apo);
+    const a = (rp + ra) / 2, e = (ra - rp) / (ra + rp), p = a * (1 - e * e);
+    const th = spec.at * DEG, nu = th - (spec.w || 0) * DEG;
+    const r = p / (1 + e * Math.cos(nu)), k = Math.sqrt(MU / p);
+    const vr = k * e * Math.sin(nu), vt = k * (1 + e * Math.cos(nu));
+    const c = Math.cos(th), s = Math.sin(th);
+    return { r: [r * c, r * s], v: [vr * c - vt * s, vr * s + vt * c], t: t || 0 };
+  }
+
+  // The local frame of a state: rh points away from Earth, ah along the direction of travel.
+  function frame(st) {
+    const r = len(st.r), rh = [st.r[0] / r, st.r[1] / r], sg = cross(st.r, st.v) < 0 ? -1 : 1;
+    return { rh, ah: [-rh[1] * sg, rh[0] * sg] };
+  }
+  // Where p is, seen from a satellite in state st: [km ahead, km above].
+  function toLocal(st, p) { const F = frame(st), d = sub(p, st.r); return [dot(d, F.ah), dot(d, F.rh)]; }
+
+  // The orbit after a burn at time t: pro m/s along the direction of travel, out m/s away from Earth.
+  function burned(o, t, pro, out) {
+    const st = propagate(o, t), F = frame(st);
+    return { r: st.r, v: [st.v[0] + (F.ah[0] * pro + F.rh[0] * out) / 1000, st.v[1] + (F.ah[1] * pro + F.rh[1] * out) / 1000], t };
+  }
+
+  // The next time after t at apoapsis (apo true) or periapsis, or null for an orbit too round to have one.
+  function nextApsis(o, t, apo) {
+    const el = elements(o);
+    if (el.e < 2e-4) return null;
+    let dM = ((apo ? Math.PI : 0) - el.M0 - el.n * (t - o.t)) % TAU;
+    if (dM < 0) dM += TAU;
+    let dt = dM / el.n;
+    if (dt < 2) dt += el.P;
+    return t + dt;
+  }
+
+  // Earth's shadow, taken as a cylinder: in LEO the penumbra lasts only seconds.
+  const sunlit = p => dot(p, SUN) > 0 || Math.abs(cross(p, SUN)) > RE;
+  // The next time from t that a satellite on orbit o is lit (lit true) or in shadow, or null if it never is.
+  function nextLight(o, t, lit) {
+    const P = elements(o).P, h = 15;
+    if (sunlit(propagate(o, t).r) === lit) return t;
+    let a = t;
+    for (let b = t + h; b <= t + 1.2 * P; b += h) {
+      if (sunlit(propagate(o, b).r) === lit) {
+        for (let i = 0; i < 25; i++) { const m = (a + b) / 2; if (sunlit(propagate(o, m).r) === lit) b = m; else a = m; }
+        return b;
+      }
+      a = b;
+    }
+    return null;
+  }
+
+  // ---------- approaches ----------
+  function separation(a, b, t) { const p = propagate(a, t).r, q = propagate(b, t).r; return Math.hypot(p[0] - q[0], p[1] - q[1]); }
+  function rangeRate(a, b, t) {   // km/s, negative while closing
+    const p = propagate(a, t), q = propagate(b, t), d = sub(p.r, q.r);
+    return dot(d, sub(p.v, q.v)) / Math.max(1e-9, len(d));
+  }
+  // The minimum of f between lo and hi, by golden-section search: { t, d }.
+  function golden(f, lo, hi) {
+    const g = (Math.sqrt(5) - 1) / 2;
+    let x1 = hi - g * (hi - lo), x2 = lo + g * (hi - lo), f1 = f(x1), f2 = f(x2);
+    for (let i = 0; i < 60 && hi - lo > 1e-3; i++) {
+      if (f1 < f2) { hi = x2; x2 = x1; f2 = f1; x1 = hi - g * (hi - lo); f1 = f(x1); }
+      else { lo = x1; x1 = x2; f1 = f2; x2 = lo + g * (hi - lo); f2 = f(x2); }
+    }
+    const t = (lo + hi) / 2;
+    return { t, d: f(t) };
+  }
+  // The closest approaches of two orbits between t0 and t1: each time their separation stops shrinking and starts
+  // to grow. Returns the closest { t, d } (with .first, the earliest), or null if there is none. Two satellites in
+  // one orbit keep their distance, give or take rounding, so a dip has to be deeper than a millimeter to count.
+  function approaches(a, b, t0, t1, perOrbit) {
+    const P = Math.min(elements(a).P, elements(b).P);
+    const n = Math.max(8, Math.ceil((t1 - t0) / P * (perOrbit || 240))), h = (t1 - t0) / n;
+    const f = t => separation(a, b, t);
+    let best = null, first = null;
+    const found = m => { if (!first) first = m; if (!best || m.d < best.d) best = m; };
+    let d0 = f(t0), d1 = f(t0 + h);
+    if (d1 >= d0 && rangeRate(a, b, t0) < -1e-9) found(golden(f, t0, t0 + h));
+    for (let i = 1; i < n; i++) {
+      const d2 = f(t0 + (i + 1) * h);
+      if (d1 < d0 && d1 <= d2 && Math.max(d0, d2) - d1 > 1e-6) found(golden(f, t0 + (i - 1) * h, t0 + (i + 1) * h));
+      d0 = d1; d1 = d2;
+    }
+    return best && { t: best.t, d: best.d, first };
+  }
+  // The smallest separation between t0 and t1, ends included.
+  function minSeparation(a, b, t0, t1, n) {
+    const f = t => separation(a, b, t), h = (t1 - t0) / n;
+    let bi = 0, bd = Infinity;
+    for (let i = 0; i <= n; i++) { const d = f(t0 + i * h); if (d < bd) { bd = d; bi = i; } }
+    return golden(f, t0 + Math.max(0, bi - 1) * h, t0 + Math.min(n, bi + 1) * h).d;
+  }
+
+  // ---------- the target's sensors ----------
+  function occluded(p, q) {   // is the Earth between p and q?
+    const d = sub(q, p), k = Math.max(0, Math.min(1, -dot(p, d) / dot(d, d)));
+    return Math.hypot(p[0] + d[0] * k, p[1] + d[1] * k) < RE;
+  }
+  function hitsEarth(from, u) {   // does a ray from `from` along unit vector u hit the Earth? Then how far off?
+    const b = dot(from, u), disc = b * b - (dot(from, from) - RE * RE);
+    const t = -b - Math.sqrt(Math.max(0, disc));
+    return disc >= 0 && t > 0 ? t : 0;
+  }
+  // Seen from tg, the conditions in direction u, for something lit or not: glare (the Sun right behind it) and the
+  // Earth behind it rather than black space.
+  function cover(tg, u, lit) {
+    const glare = sunlit(tg) && dot(u, SUN) > Math.cos(GLARE), earth = hitsEarth(tg, u) > 0;
+    const bg = earth ? EARTH_BG : 1;
+    return { glare, earth, opt: lit ? bg * (glare ? GLARE_OPT : 1) : 0, ir: bg * (glare ? GLARE_IR : 1) };
+  }
+  // What the target can sense of you (at me) from tg: suspicion % per second by channel, and the conditions.
+  function sense(s, me, tg) {
+    const T = s.m.target, d = sub(me, tg), dist = Math.max(0.01, len(d));
+    const out = { opt: 0, ir: 0, radar: 0, jam: 0, dist, lit: sunlit(me), glare: false, earth: false, hidden: false };
+    if (occluded(tg, me)) { out.hidden = true; return out; }
+    const c = cover(tg, [d[0] / dist, d[1] / dist], out.lit);
+    out.glare = c.glare; out.earth = c.earth;
+    out.opt = DECAY * T.opt * c.opt * (SEE_SUN / dist) ** 2;
+    out.ir = DECAY * T.ir * c.ir * (SEE_HEAT / dist) ** 2;
+    out.radar = DECAY * T.radar * (s.jam ? JAM_CUT : 1) * (SEE_RADAR / dist) ** 4;
+    if (s.jam) out.jam = DECAY * (HEAR_JAM / dist) ** 2;
+    return out;
+  }
+  // How close you could come from direction a (radians in tg's local frame: 0 ahead, π/2 up) before the target's
+  // suspicion starts to rise: where the rates of sense() add up to DECAY. Close in, the light is the target's own.
+  // Also which sensor gives you away there, the one adding most to the suspicion: 'opt' (its cameras), 'ir', 'radar'
+  // or 'jam' (it hears your jamming).
+  function seenBy(s, tg, a) {
+    const T = s.m.target, F = frame(tg), g = GAIN[s.alert];
+    const u = [F.ah[0] * Math.cos(a) + F.rh[0] * Math.sin(a), F.ah[1] * Math.cos(a) + F.rh[1] * Math.sin(a)];
+    const c = cover(tg.r, u, sunlit(tg.r));
+    const opt = g * T.opt * c.opt * SEE_SUN ** 2, ir = g * T.ir * c.ir * SEE_HEAT ** 2, jam = s.jam ? g * HEAR_JAM ** 2 : 0;
+    const A = opt + ir + jam, B = g * T.radar * (s.jam ? JAM_CUT : 1) * SEE_RADAR ** 4;
+    const x = B > 0 ? (Math.sqrt(A * A + 4 * B) - A) / (2 * B) : 1 / A;   // solves A/d² + B/d⁴ = 1 for x = 1/d²
+    const parts = { opt, ir, jam, radar: B * x };   // each one's share, at that range, on the same 1/d² footing
+    let by = 'opt';
+    for (const k in parts) if (parts[k] > parts[by]) by = k;
+    return { d: 1 / Math.sqrt(x), by };
+  }
+  const seenWithin = (s, tg, a) => seenBy(s, tg, a).d;
+  // The suspicion % a burn of dv m/s adds: the plume of the main engine is bright, cold gas much less so.
+  function plume(s, dv, gas, me, tg) {
+    if (occluded(tg, me)) return 0;
+    const d = sub(me, tg), dist = Math.max(0.01, len(d)), c = cover(tg, [d[0] / dist, d[1] / dist], true);
+    return (gas ? K_GAS : K_PLUME) * s.m.target.ir * dv * (10 / dist) ** 2 * (c.earth ? 0.5 : 1) * (c.glare ? 0.2 : 1);
+  }
+
+  // ---------- a game ----------
+  function start(m) {
+    const T = m.target, you = orbitFrom(m.you), tgt = orbitFrom(m.tgt);
+    const s = {
+      m, t: 0, you, tgt, main: m.main, gas: m.gas, kv: m.kv, batt: m.batt, jam: false, brownout: false,
+      susp: 0, alert: 0, maxAlert: 0, maxSusp: 0, decoys: T.decoys, evades: T.evades, lastEvade: -Infinity, nextEvade: 0,
+      sched: (T.schedule || []).map(x => ({ t: x.t, pro: x.pro || 0, out: x.out || 0 })),
+      shot: null, over: null, dead: false, debris: null, dvMain: 0, dvGas: 0, events: [], lit: true, inRange: false, rates: null,
+    };
+    const a = propagate(you, 0).r, b = propagate(tgt, 0).r;
+    s.lit = sunlit(a); s.rates = sense(s, a, b); s.inRange = len(sub(a, b)) <= STRIKE;
+    return s;
+  }
+  const ev = (s, k, x) => s.events.push(Object.assign({ k }, x));
+  // unseen: the target was never alerted before the end, or before the shot that killed it was launched
+  function finish(s, win, how, unseen) { if (!s.over) { s.over = { win, how, t: s.t, unseen: !!unseen }; s.jam = false; ev(s, 'over', s.over); } }
+
+  function raise(s, x) {
+    if (s.alert === 2) { s.susp = 100; return; }
+    s.susp = Math.max(0, Math.min(100, s.susp + x));
+    if (s.susp > s.maxSusp) s.maxSusp = s.susp;
+    const lvl = s.susp >= 100 ? 2 : s.susp >= SUSPECT_AT ? 1 : s.susp < CALM_AT ? 0 : s.alert;
+    if (lvl !== s.alert) {
+      s.alert = lvl;
+      if (lvl > s.maxAlert) s.maxAlert = lvl;
+      if (lvl === 2) s.nextEvade = s.t + 30;
+      ev(s, 'alert', { level: lvl });
+    }
+  }
+
+  // Make a burn of pro and out m/s now, with the main engine or (gas true) the cold-gas thrusters.
+  function burn(s, pro, out, gas) {
+    const dv = Math.hypot(pro, out), fuel = gas ? 'gas' : 'main';
+    if (!(dv > 0) || s.over || s.brownout || dv > s[fuel] + 1e-9) return null;
+    s.you = burned(s.you, s.t, pro, out);
+    s[fuel] = Math.max(0, s[fuel] - dv);
+    if (gas) s.dvGas += dv; else s.dvMain += dv;
+    const inc = plume(s, dv, gas, s.you.r, propagate(s.tgt, s.t).r) * GAIN[s.alert];
+    const before = s.susp;
+    raise(s, inc);
+    ev(s, 'burn', { dv, gas, inc: s.susp - before, pro, out });
+    return { dv, inc };
+  }
+
+  function setJam(s, on) {
+    if (s.over || (on && s.brownout)) return false;
+    s.jam = !!on;
+    return true;
+  }
+
+  // Whether a shot now would hit: the interceptor's time of flight against the target's time to react.
+  function solution(s) {
+    const a = propagate(s.you, s.t), b = propagate(s.tgt, s.t);
+    const d = sub(a.r, b.r), range = Math.max(1e-6, len(d)), w = sub(a.v, b.v);
+    const closing = -dot(d, w) / range * 1000;
+    const tof = range * 1000 / Math.max(20, KV_SPEED + closing);
+    const react = REACT[s.alert];
+    const hit = tof < react || s.decoys <= 0;
+    const ok = !s.over && !s.shot && s.kv > 0 && !s.brownout && range <= STRIKE;
+    return { range, closing, tof, react, hit, ok };
+  }
+  function fire(s) {
+    const sol = solution(s);
+    if (!sol.ok) return null;
+    s.kv--;
+    s.shot = { t0: s.t, tHit: s.t + sol.tof, tDecoy: s.t + sol.react, hit: sol.hit, alert: s.alert, from: toLocal(propagate(s.tgt, s.t), propagate(s.you, s.t).r) };
+    ev(s, 'fire', sol);
+    const peak = s.maxAlert, top = s.maxSusp;
+    raise(s, 100);   // there's no mistaking a launch...
+    s.maxAlert = peak; s.maxSusp = top;   // ...but that isn't the target having spotted you
+    return sol;
+  }
+  function debris(o, t) {
+    const st = propagate(o, t), rnd = rng(7), out = [];
+    for (let i = 0; i < 40; i++) {
+      const a = rnd() * TAU, v = 0.004 + 0.04 * rnd() * rnd();
+      out.push({ r: st.r.slice(), v: [st.v[0] + v * Math.cos(a), st.v[1] + v * Math.sin(a)], t });
+    }
+    return out;
+  }
+  function resolveShot(s) {
+    const shot = s.shot;
+    s.shot = null;
+    if (shot.hit) { s.dead = true; s.debris = debris(s.tgt, s.t); finish(s, true, 'kill', shot.alert < 2); }
+    else { s.decoys = Math.max(0, s.decoys - 1); ev(s, 'miss'); }
+  }
+
+  // An alerted target that sees a close pass coming burns whichever way opens it up most.
+  function considerEvasion(s) {
+    s.nextEvade = s.t + 60;
+    if (s.shot || s.t - s.lastEvade < EVADE_GAP) return;
+    const t0 = s.t + 60, t1 = s.t + 0.6 * elements(s.tgt).P, dv = s.m.target.evadeDv;
+    if (minSeparation(s.you, s.tgt, t0, t1, 120) > EVADE_NEAR) return;
+    let best = null;
+    for (let k = 0; k < 8; k++) {
+      const o = burned(s.tgt, s.t, dv * Math.cos(k * TAU / 8), dv * Math.sin(k * TAU / 8));
+      const d = minSeparation(s.you, o, t0, t1, 120);
+      if (!best || d > best.d) best = { o, d };
+    }
+    s.tgt = best.o; s.evades--; s.lastEvade = s.t;
+    ev(s, 'tgt-burn', { why: 'evade' });
+  }
+
+  // How much time may pass per real second: little enough that crossing the close-in view takes a few seconds.
+  // That's motion in the target's own turning frame: two satellites in one orbit, 90 km apart, are still relative
+  // to each other, though their velocities point 0.75° apart and so differ by 100 m/s.
+  function warpCap(s) {
+    if (s.shot) return 10;
+    if (s.dead) return Infinity;
+    const p0 = toLocal(propagate(s.tgt, s.t), propagate(s.you, s.t).r), range = len(p0);
+    if (range > 300) return Infinity;
+    const p1 = toLocal(propagate(s.tgt, s.t + 1), propagate(s.you, s.t + 1).r);
+    return Math.max(1, range / Math.max(1e-6, len(sub(p1, p0))) / 5);
+  }
+
+  function substep(s) { const d = separation(s.you, s.tgt, s.t); return d < 30 ? 0.5 : d < 300 ? 2 : 10; }
+  function nextEventTime(s) {
+    let t = s.m.time;
+    if (s.sched.length) t = Math.min(t, s.sched[0].t);
+    if (s.shot) t = Math.min(t, s.shot.tHit);
+    if (s.alert === 2 && s.evades > 0) t = Math.min(t, s.nextEvade);
+    return t;
+  }
+  function advance(s, h) {
+    const t0 = s.t, t1 = t0 + h;
+    if (!s.dead) {
+      // the relative motion is all but straight over a substep, so this catches a collision between samples
+      const a0 = propagate(s.you, t0), b0 = propagate(s.tgt, t0);
+      const d = sub(a0.r, b0.r), w = sub(a0.v, b0.v), ww = dot(w, w);
+      const k = ww > 0 ? Math.max(0, Math.min(h, -dot(d, w) / ww)) : 0;
+      if (Math.hypot(d[0] + w[0] * k, d[1] + w[1] * k) < RAM) {
+        s.t = t0 + k; s.dead = true; s.debris = debris(s.tgt, s.t); finish(s, true, 'ram', s.alert < 2); return;
+      }
+    }
+    const tm = t0 + h / 2, a = propagate(s.you, tm).r, b = propagate(s.tgt, tm).r;
+    if (!s.dead) {
+      const R = s.rates = sense(s, a, b);
+      raise(s, ((R.opt + R.ir + R.radar + R.jam) * GAIN[s.alert] - DECAY) * h);
+    }
+    const lit = sunlit(a);
+    if (lit !== s.lit) { s.lit = lit; ev(s, 'light', { lit }); }
+    let p = s.batt + ((lit ? CHARGE : 0) - BASE - (s.jam ? JAM_DRAW : 0)) * h;
+    if (p <= 0) { p = 0; if (!s.brownout) { s.brownout = true; s.jam = false; ev(s, 'brownout'); } }
+    else if (s.brownout && p >= RECOVER) { s.brownout = false; ev(s, 'power'); }
+    s.batt = Math.min(100, p);
+    s.t = t1;
+    if (len(propagate(s.you, t1).r) < RE + ATMOS) { finish(s, false, 'reentry'); return; }
+    if (!s.dead) {
+      const inRange = separation(s.you, s.tgt, t1) <= STRIKE;
+      if (inRange !== s.inRange) { s.inRange = inRange; ev(s, 'range', { inRange }); }
+      while (s.sched.length && s.sched[0].t <= t1 + 1e-9) {
+        const m = s.sched.shift();
+        s.tgt = burned(s.tgt, s.t, m.pro, m.out);
+        ev(s, 'tgt-burn', { why: 'schedule' });
+      }
+      if (s.shot && t1 >= s.shot.tHit - 1e-9) resolveShot(s);
+      if (!s.dead && s.alert === 2 && s.evades > 0 && t1 >= s.nextEvade - 1e-9) considerEvasion(s);
+    }
+    if (t1 >= s.m.time - 1e-9) finish(s, false, 'time');
+  }
+  // Let dt seconds of mission time pass.
+  function step(s, dt) {
+    const end = s.t + dt;
+    for (let guard = 0; s.t < end - 1e-9 && !s.over && guard < 200000; guard++) {
+      let h = Math.min(end - s.t, substep(s));
+      const next = nextEventTime(s);
+      if (next > s.t + 1e-9 && next < s.t + h) h = next - s.t;
+      advance(s, h);
+    }
+  }
+
+  // ---------- missions ----------
+  // Angles are degrees counterclockwise from the Sun direction, the way the satellites go round.
+  const MISSIONS = [
+    {
+      id: 'gap', name: 'Close the gap', short: 'The target shares your orbit, a little way ahead. Learn to catch up.',
+      you: { alt: 520, at: 40 }, tgt: { alt: 520, at: 40.75 },
+      main: 30, gas: 6, kv: 2, batt: 100, time: 6 * 3600, par: 8, hints: true,
+      target: { name: 'Weathervane', kind: 'an old weather satellite, refitted to listen to radio traffic', opt: 0.5, ir: 0.5, radar: 0, decoys: 0, evades: 0, evadeDv: 0 },
+      brief: [
+        'Weathervane shares your orbit, about 90 km ahead. It has no radar, its cameras are poor, and it carries no decoys.',
+        'To catch it, slow down. A retrograde burn lowers the far side of your orbit, and a lower orbit is a faster one, so you gain on the target every lap. Drag the burn pad to the left, fine-tune with − and +, and watch Planned: the closest you would come, and where. When it is under 5 km, press Burn. Then speed time up, and fire once you are in range.',
+        'Its cameras are poor, but not blind: in sunlight they could see you from 14 km. You will meet wherever you are when you burn plus a few laps, so you can let time run with the burn planned until Planned says you would meet in Earth\'s shadow.',
+      ],
+    },
+    {
+      id: 'climb', name: 'Climb', short: 'The target is 350 km above you. Time a Hohmann transfer.',
+      you: { alt: 400, at: 0 }, tgt: { alt: 750, at: 30 },
+      main: 130, gas: 8, kv: 2, batt: 100, time: 8 * 3600, par: 106,
+      target: { name: 'Lantern', kind: 'a communications relay', opt: 1, ir: 1, radar: 1, decoys: 1, evades: 1, evadeDv: 5 },
+      brief: [
+        'Lantern is 350 km above you and 30° ahead. To get there, burn prograde: you coast half an orbit up to its altitude. Burn at the wrong moment and it won\'t be there when you arrive.',
+        'Plan a prograde burn of about 100 m/s and let time run. Planned shrinks as each window opens, and time pauses when it is smallest. You won\'t have the propellant to match Lantern\'s orbit, so strike as you pass. Coming at it in sunlight, you will be seen; Planned says where you would meet.',
+      ],
+    },
+    {
+      id: 'night', name: 'Night shift', short: 'Sharp eyes. Come in from Earth\'s shadow.',
+      you: { alt: 700, at: 0 }, tgt: { alt: 520, at: -25 },
+      main: 90, gas: 10, kv: 2, batt: 100, time: 8 * 3600, par: 56,
+      target: { name: 'Magpie', kind: 'a reconnaissance satellite', opt: 4, ir: 1.5, radar: 1.5, decoys: 1, evades: 2, evadeDv: 5 },
+      brief: [
+        'Magpie is 180 km below you and 25° behind. Its cameras are sharp: come at it in sunlight and it will see you from 40 km.',
+        'Arrange to meet it in Earth\'s shadow. Even there its radar and infrared will pick you up a few kilometers out, so switch on your jammer for the last stretch, and keep an eye on the battery: in the shadow, nothing recharges it.',
+      ],
+    },
+    {
+      id: 'wary', name: 'Wary', short: 'This one moves. Keep your intercept up to date.',
+      you: { alt: 520, at: 0 }, tgt: { peri: 450, apo: 800, w: 90, at: 60 },
+      main: 110, gas: 12, kv: 2, batt: 100, time: 8 * 3600, par: 80,
+      target: {
+        name: 'Heron', kind: 'a signals-intelligence satellite', opt: 1.5, ir: 1, radar: 1, decoys: 2, evades: 3, evadeDv: 6,
+        schedule: [{ t: 1.5 * 3600, pro: 8 }, { t: 3.5 * 3600, out: -6 }, { t: 5.5 * 3600, pro: 6 }],
+      },
+      brief: [
+        'Heron is in an elliptical orbit, and every couple of hours it changes it as a matter of routine, so an intercept you plan now may not last. Each time it burns, plan a correction. Up close, use cold gas.',
+        'If it is alerted it will dodge, and it has two decoys.',
+      ],
+    },
+    {
+      id: 'deep', name: 'Long way down', short: 'Far below and behind you, with little to spare.',
+      you: { alt: 1100, at: 0 }, tgt: { alt: 380, at: -40 },
+      main: 230, gas: 8, kv: 2, batt: 100, time: 5 * 3600, par: 210,
+      target: { name: 'Kestrel', kind: 'an early-warning satellite', opt: 1.5, ir: 1.5, radar: 1, decoys: 1, evades: 2, evadeDv: 6 },
+      brief: [
+        'Kestrel is 720 km below you and 40° behind. Propellant is tight, and so is time. The cheapest way down is not always the safest.',
+      ],
+    },
+  ];
+
+  // The Δv (m/s) of the two burns of a Hohmann transfer between circular orbits of radius r1 and r2, and its time.
+  function hohmann(r1, r2) {
+    const dv1 = Math.sqrt(MU / r1) * (Math.sqrt(2 * r2 / (r1 + r2)) - 1);
+    const dv2 = Math.sqrt(MU / r2) * (1 - Math.sqrt(2 * r1 / (r1 + r2)));
+    return { dv1: dv1 * 1000, dv2: dv2 * 1000, T: Math.PI * Math.sqrt(((r1 + r2) / 2) ** 3 / MU) };
+  }
+  // A random engagement that a Hohmann transfer can win, its window opening 20 to 100 minutes in.
+  function randomMission(seed) {
+    const rnd = rng(seed), pick = (a, b) => a + (b - a) * rnd();
+    const ya = Math.round(pick(350, 900));
+    let ta = ya;
+    while (Math.abs(ta - ya) < 150) ta = Math.round(pick(350, 950));
+    const r1 = RE + ya, r2 = RE + ta, H = hohmann(r1, r2);
+    const n1 = Math.sqrt(MU / r1 ** 3), n2 = Math.sqrt(MU / r2 ** 3);
+    const wait = pick(20, 100) * 60, lead = Math.PI - n2 * H.T, at = Math.round(pick(0, 360));
+    const radar = rnd() < 0.6 ? 1 : 0, need = Math.abs(H.dv1);
+    return {
+      id: 'random', name: 'Free hunt', short: 'A new target in a new orbit every time.', seed, window: { t: wait, dv: H.dv1 },
+      you: { alt: ya, at }, tgt: { alt: ta, at: at + (lead - (n2 - n1) * wait) / DEG },
+      main: Math.ceil(need * 1.25 + 20), gas: 8, kv: 2, batt: 100, time: Math.round((wait + H.T) / 60) * 60 + 3 * 3600,
+      par: Math.ceil(need + 8),
+      target: {
+        name: 'Unknown', kind: 'an unidentified satellite', opt: Math.round(pick(5, 20)) / 10, ir: Math.round(pick(5, 15)) / 10,
+        radar, decoys: Math.floor(pick(0, 2.99)), evades: Math.floor(pick(0, 3.99)), evadeDv: 5,
+      },
+      brief: [
+        'An unidentified satellite, ' + (ta > ya ? ta - ya + ' km above' : ya - ta + ' km below') + ' you. Burn when the window opens.',
+      ],
+    };
+  }
+
+  return {
+    MU, RE, TAU, DEG, SUN, ATMOS, STRIKE, REACT, KV_SPEED, SUSPECT_AT, DECAY, GAIN, GLARE,
+    SEE_SUN, SEE_HEAT, SEE_RADAR, HEAR_JAM, JAM_CUT,
+    len, sub, dot, rng, propagate, elements, orbitFrom, frame, toLocal, burned, nextApsis, sunlit, nextLight,
+    separation, rangeRate, approaches, minSeparation, occluded, sense, seenWithin, seenBy, plume,
+    start, step, burn, setJam, solution, fire, warpCap, MISSIONS, hohmann, randomMission,
+  };
+})(); // CORE
+
+/* ============ the page: drawing, controls, dialogs, the self-test ============ */
+(function () {
+  'use strict';
+  const C = CORE;
+  const $ = sel => document.querySelector(sel);
+  const WARPS = [1, 10, 100, 1000];
+  const SAVE_KEY = 'conjunction.v1';
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  const calm = () => reduceMotion.matches;
+  const COL = { you: '#55d6ea', tgt: '#ff6b57', plan: '#f2f5fa', sun: '#ffd36b', ok: '#71d394', warn: '#ffb547', bad: '#ff5d5d', dim: '#8d9cb2' };
+  // The target's sensors, as the close-in view names and colors them.
+  let seenKey = '';   // the sensors on the outline in the close-in view, for the key under it
+  const SENSOR = {
+    opt: { name: 'cameras', col: '#ffd36b', sees: 'cameras see you' }, ir: { name: 'infrared', col: '#ff7a5c', sees: 'infrared sees you' },
+    radar: { name: 'radar', col: '#b99bff', sees: 'radar sees you' }, jam: { name: 'jammer heard', col: '#ff9ad5', sees: 'jammer heard' },
+  };
+  const MONO = 'ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace';
+
+  const stage = $('#stage'), cv = $('#view'), ctx = cv.getContext('2d');
+  const pad = $('#pad'), pctx = pad.getContext('2d');
+  const E = {};
+  for (const id of ['clock', 'left', 'warp-info', 'light', 'det', 'det-fill', 'det-state', 'det-pct', 'det-why', 'toast',
+    'r-seen', 'i-seen', 'i-range', 'i-closing', 'i-ca', 'r-plan', 'i-plan', 'r-strike', 'i-strike', 'btn-jam', 'btn-fire', 'e-main', 'e-gas',
+    'main-bar', 'main-v', 'gas-bar', 'gas-v', 'pwr', 'pwr-bar', 'pwr-v', 'kv-v', 'pro-v', 'out-v', 'dv-info', 'btn-clear',
+    'btn-burn', 'btn-pause', 'btn-slower', 'btn-faster', 'warp-v', 'v-orbit', 'v-close']) E[id] = document.getElementById(id);
+  const skipBtns = [...document.querySelectorAll('[data-skip]')];
+  const dlg = { title: $('#dlg-title'), brief: $('#dlg-brief'), menu: $('#dlg-menu'), help: $('#dlg-help'), debrief: $('#dlg-debrief') };
+
+  // ---------- state ----------
+  let S = null;                       // the game in progress, from C.start()
+  let mission = null, missionIdx = 0;
+  let plan = { pro: 0, out: 0 }, gas = false;
+  let warpIdx = 0, paused = true, effWarp = 1, skip = null;
+  let view = 'orbit', autoClosed = false;
+  let caCur = null, caPlan = null, planOrbit = null, slowedFor = -1;
+  let trail = [], fx = [];
+  let toast = { text: '', tone: '', until: 0 };
+  let W = 0, H = 0, DPR = 1, needDraw = true;
+  let testing = false;
+  let progress = loadProgress();
+
+  // ---------- formatting ----------
+  function fmtDist(km) {
+    if (!isFinite(km)) return '—';
+    if (km < 1) return Math.round(km * 1000) + ' m';
+    if (km < 10) return km.toFixed(2) + ' km';
+    if (km < 100) return km.toFixed(1) + ' km';
+    return Math.round(km).toLocaleString('en-US') + ' km';
+  }
+  function fmtClock(s) {
+    s = Math.max(0, Math.floor(s));
+    const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = s % 60;
+    return (h ? h + ':' + String(m).padStart(2, '0') : String(m)) + ':' + String(x).padStart(2, '0');
+  }
+  const fmtSpeed = ms => (Math.abs(ms) < 10 ? Math.abs(ms).toFixed(1) : Math.round(Math.abs(ms))) + ' m/s';
+  const fmtDv = x => (gas ? x.toFixed(2) : x.toFixed(1));
+  const signed = s => (s.startsWith('-') ? '−' + s.slice(1) : s === '0.0' || s === '0.00' ? s : '+' + s);
+  const stars = k => '★'.repeat(k) + '☆'.repeat(3 - k);
+  const fmtCa = ca => fmtDist(ca.d) + ' in ' + fmtClock(ca.t - S.t) + (C.sunlit(C.propagate(S.tgt, ca.t).r) ? ', sunlit' : ', shadow');
+
+  // ---------- saved ratings ----------
+  function parseProgress(o) {
+    const out = { best: {} };
+    if (!o || typeof o !== 'object' || !o.best || typeof o.best !== 'object') return out;
+    for (const m of C.MISSIONS.concat([{ id: 'random' }])) {
+      const v = Object.prototype.hasOwnProperty.call(o.best, m.id) ? o.best[m.id] : undefined;
+      if (Number.isInteger(v) && v >= 0 && v <= 3) out.best[m.id] = v;
+    }
+    return out;
+  }
+  function loadProgress() {
+    try { return parseProgress(JSON.parse(localStorage.getItem(SAVE_KEY))); } catch (e) { return { best: {} }; }
+  }
+  function saveProgress() {
+    if (testing) return;
+    try { localStorage.setItem(SAVE_KEY, JSON.stringify(progress)); } catch (e) { /* private mode: ratings just aren't kept */ }
+  }
+
+  // ---------- predictions ----------
+  const hasPlan = () => plan.pro !== 0 || plan.out !== 0;
+  function horizon() {
+    const P = Math.max(C.elements(S.you).P, C.elements(S.tgt).P);
+    return Math.max(60, Math.min(4 * P, S.m.time - S.t));
+  }
+  function predict() {
+    if (!S || S.dead) { caCur = caPlan = planOrbit = null; return; }
+    const H = horizon();
+    caCur = C.approaches(S.you, S.tgt, S.t, S.t + H);
+    planOrbit = hasPlan() ? C.burned(S.you, S.t, plan.pro, plan.out) : null;
+    caPlan = planOrbit ? C.approaches(planOrbit, S.tgt, S.t, S.t + H) : null;
+  }
+
+  // ---------- messages ----------
+  function say(text, tone) { toast = { text, tone: tone || '', until: performance.now() + 5000 }; needDraw = true; }
+  function hint() {
+    if (!S || !S.m.hints || S.over) return '';
+    if (S.dvMain + S.dvGas === 0) {
+      if (!hasPlan()) return 'Drag the burn pad to the left to plan a retrograde burn.';
+      if (!caPlan || caPlan.d > C.STRIKE) return 'Adjust the burn until Planned is under 5 km.';
+      return 'That burn takes you within 5 km of the target. Press Burn.';
+    }
+    if (S.inRange) return S.kv ? 'In range: press Fire.' : '';
+    if (caCur && caCur.d <= C.STRIKE) return 'On course. Speed time up with +, or press Closest to skip ahead.';
+    return 'Off course: plan a small correction until Planned is under 5 km.';
+  }
+
+  // ---------- the game loop ----------
+  let raf = 0, lastNow = 0;
+  function kick() { needDraw = true; if (!raf) { lastNow = performance.now(); raf = requestAnimationFrame(frame); } }
+  function frame(now) {
+    raf = 0;
+    const dt = Math.min(0.1, Math.max(0, (now - lastNow) / 1000));
+    lastNow = now;
+    let moving = false;
+    if (S) {
+      if (S.over) { if (S.t - S.over.t < 8) { S.t += dt; moving = true; } }   // let the debris drift for a few seconds
+      else if (!paused) {
+        const cap = C.warpCap(S), chosen = skip ? 1000 : WARPS[warpIdx];
+        effWarp = Math.max(1, Math.round(Math.min(chosen, cap)));
+        let gdt = dt * effWarp;
+        if (skip) gdt = Math.min(gdt, Math.max(0, skip.t - S.t));
+        if (gdt > 0) C.step(S, gdt);
+        if (skip && S.t >= skip.t - 1e-6 && !S.over) { const l = skip.label; skip = null; setPaused(true); say('Paused at ' + l + '.'); }
+        moving = true;
+      }
+      handleEvents();
+      if (moving || needDraw) {
+        predict();
+        autoSlow();
+        windowWatch();
+        recordTrail();
+      }
+    }
+    if (moving || needDraw || fx.length || performance.now() < toast.until + 400) {
+      draw();
+      hud();
+      needDraw = false;
+    }
+    fx = fx.filter(f => now - f.t0 < f.life);
+    if (moving || fx.length || performance.now() < toast.until + 400) raf = requestAnimationFrame(frame);
+  }
+
+  function setPaused(p) {
+    paused = p;
+    if (p) skip = null;
+    kick();
+  }
+  function setWarp(i) { warpIdx = Math.max(0, Math.min(WARPS.length - 1, i)); skip = null; if (paused) setPaused(false); kick(); }
+  function slowDown() { if (WARPS[warpIdx] > 1 || skip) { warpIdx = 0; skip = null; } }
+  // Drop to real time for a close approach that's within strike range, once per approach.
+  function autoSlow() {
+    if (!S || S.over || paused || !caCur) return;
+    if (caCur.d <= C.STRIKE && caCur.t > S.t && caCur.t - S.t < 120 && Math.abs(caCur.t - slowedFor) > 30) {
+      slowedFor = caCur.t;
+      if (WARPS[warpIdx] > 10 || skip) { warpIdx = 1; skip = null; say('Closest approach coming up: ' + fmtDist(caCur.d) + '.'); }
+    }
+  }
+  // With a burn planned and time running, its closest approach changes as the moment to burn comes and goes. Slow
+  // down as it closes in, and pause when it stops getting better, so a window isn't missed at 1000×.
+  let watch = { key: '' };
+  function windowWatch() {
+    if (!S || S.over || paused || !caPlan) return;
+    const key = plan.pro + ',' + plan.out, d = caPlan.d;
+    if (key !== watch.key) { watch = { key, prev: d, stage: 0 }; return; }
+    const better = !caCur || caCur.d > 2 * d + 1;   // a window, not just a small correction to a good course
+    if (better && d < 30 && watch.stage < 1 && (skip || WARPS[warpIdx] > 10)) {
+      watch.stage = 1; warpIdx = 1; skip = null; say('A window is opening: Planned ' + fmtDist(d) + '. Slowing down.');
+    }
+    if (better && d < 6 && watch.stage < 2) { watch.stage = 2; if (WARPS[warpIdx] > 1 || skip) { warpIdx = 0; skip = null; } }
+    if (better && watch.prev < 5 && d > watch.prev + 1e-4 && watch.stage < 3) {
+      watch.stage = 3; setPaused(true); say('Now is the moment: Planned was ' + fmtDist(watch.prev) + '. Burn, or let it pass.', 'ok');
+    }
+    watch.prev = d;
+  }
+  function recordTrail() {
+    if (!S || S.dead) return;
+    const last = trail[trail.length - 1], gap = S.inRange ? 1 : 6;
+    if (last && S.t - last.t < gap) return;
+    trail.push({ t: S.t, p: C.toLocal(C.propagate(S.tgt, S.t), C.propagate(S.you, S.t).r) });
+    if (trail.length > 700) trail.splice(0, trail.length - 700);
+  }
+
+  function handleEvents() {
+    if (!S) return;
+    for (const e of S.events.splice(0)) {
+      if (e.k === 'alert') {
+        if (e.level === 2) { say('Target alerted! It will dodge close passes, and its decoys are ready.', 'bad'); slowDown(); }
+        else if (e.level === 1) { say('The target is suspicious: its sensors are looking harder.', 'warn'); slowDown(); }
+        else say('The target has lost interest.', 'ok');
+      } else if (e.k === 'tgt-burn') {
+        say(e.why === 'evade' ? 'The target is burning to dodge you!' : 'The target fired its engine: a routine change of orbit.', 'warn');
+        fx.push({ kind: 'plume', who: 'tgt', t0: performance.now(), life: 1600 });
+        trail = [];
+        slowDown();
+      } else if (e.k === 'light') {
+        say(e.lit ? 'Back in sunlight: the solar panels are charging.' : 'In Earth\'s shadow: running on battery.');
+      } else if (e.k === 'range') {
+        if (e.inRange) { say('Within strike range.', 'ok'); if (WARPS[warpIdx] > 10 || skip) { warpIdx = 1; skip = null; } }
+      } else if (e.k === 'brownout') {
+        say('Battery flat: no burns, jamming or firing until it recovers.', 'bad');
+      } else if (e.k === 'power') {
+        say('Power restored.', 'ok');
+      } else if (e.k === 'burn') {
+        fx.push({ kind: 'plume', who: 'you', dir: [e.pro, e.out], t0: performance.now(), life: 1400 });
+        say('Burned ' + e.dv.toFixed(e.gas ? 2 : 1) + ' m/s' + (e.inc >= 0.5 ? '. The plume raised suspicion by ' + Math.round(e.inc) + '%.' : '.'), e.inc >= 10 ? 'warn' : '');
+      } else if (e.k === 'fire') {
+        say('Interceptor away: ' + e.tof.toFixed(0) + ' s to impact.');
+        warpIdx = 0; skip = null;
+      } else if (e.k === 'miss') {
+        say('Decoys! The interceptor was drawn off.', 'bad');
+        fx.push({ kind: 'decoys', t0: performance.now(), life: 4000 });
+      } else if (e.k === 'over') {
+        gameOver();
+      }
+    }
+  }
+
+  // ---------- drawing ----------
+  function resize() {
+    const r = stage.getBoundingClientRect();
+    DPR = Math.min(window.devicePixelRatio || 1, 3);
+    W = Math.max(1, Math.round(r.width)); H = Math.max(1, Math.round(r.height));
+    cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+    const pr = pad.getBoundingClientRect(), ps = Math.max(1, Math.round(pr.width));
+    pad.width = Math.round(ps * DPR); pad.height = Math.round(ps * DPR);
+    kick();
+  }
+  function draw() {
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    seenKey = '';
+    if (!S) { ctx.fillStyle = '#04060b'; ctx.fillRect(0, 0, W, H); drawStars(); }
+    else if (view === 'orbit') drawOrbitView();
+    else drawCloseView();
+    drawPad();
+  }
+  // The part of the view clear of the read-outs at the top and bottom.
+  function viewBox() {
+    const top = 70, bottom = 62;
+    const V = Math.max(Math.min(W, H) * 0.36, Math.min(W / 2 - 10, (H - top - bottom) / 2 - 4));
+    return { cx: W / 2, cy: top + (H - top - bottom) / 2, V };
+  }
+  const STARS = (() => { const r = C.rng(11), a = [[], [], []]; for (let i = 0; i < 220; i++) a[i % 3].push([r(), r()]); return a; })();
+  function drawStars() {
+    ['rgba(220,230,255,0.18)', 'rgba(220,230,255,0.35)', 'rgba(220,230,255,0.6)'].forEach((c, i) => {
+      ctx.fillStyle = c;
+      for (const [x, y] of STARS[i]) ctx.fillRect(Math.floor(x * W), Math.floor(y * H), 1, 1);
+    });
+  }
+  function label(text, x, y, color, align) {
+    ctx.font = '11px ' + MONO;
+    ctx.textAlign = align || 'left';
+    ctx.textBaseline = 'middle';
+    // keep it on the canvas
+    const w = ctx.measureText(text).width, left = ctx.textAlign === 'left' ? x : ctx.textAlign === 'right' ? x - w : x - w / 2;
+    x += Math.max(0, 4 - left) - Math.max(0, left + w - (W - 4));
+    y = Math.max(8, Math.min(H - 8, y));
+    ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,0.85)'; ctx.strokeText(text, x, y);
+    ctx.fillStyle = color; ctx.fillText(text, x, y);
+  }
+  function diamond(x, y, r, color, fill) {
+    ctx.beginPath(); ctx.moveTo(x, y - r); ctx.lineTo(x + r, y); ctx.lineTo(x, y + r); ctx.lineTo(x - r, y); ctx.closePath();
+    if (fill) { ctx.fillStyle = color; ctx.fill(); } else { ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.stroke(); }
+  }
+  function ring(x, y, r, color, width) { ctx.beginPath(); ctx.arc(x, y, r, 0, C.TAU); ctx.strokeStyle = color; ctx.lineWidth = width || 1.5; ctx.stroke(); }
+  function dot(x, y, r, color) { ctx.beginPath(); ctx.arc(x, y, r, 0, C.TAU); ctx.fillStyle = color; ctx.fill(); }
+  const clampPx = v => Math.max(-1e5, Math.min(1e5, v));
+  function polyline(pts, color, width, dash, alpha) {
+    if (pts.length < 2) return;
+    ctx.save();
+    ctx.globalAlpha = alpha === undefined ? 1 : alpha;
+    ctx.beginPath(); ctx.moveTo(clampPx(pts[0][0]), clampPx(pts[0][1]));
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(clampPx(pts[i][0]), clampPx(pts[i][1]));
+    ctx.strokeStyle = color; ctx.lineWidth = width; ctx.setLineDash(dash || []); ctx.lineJoin = 'round'; ctx.stroke();
+    ctx.restore();
+  }
+  // Points round a whole orbit, cached per orbit: an orbit object is replaced, never changed, when anyone burns.
+  const pathCache = new WeakMap();
+  function orbitPoints(o, n) {
+    if (pathCache.has(o)) return pathCache.get(o);
+    const P = C.elements(o).P, pts = [];
+    for (let i = 0; i <= n; i++) pts.push(C.propagate(o, o.t + P * i / n).r);
+    pathCache.set(o, pts);
+    return pts;
+  }
+  function plumeFx(x, y, dir, who, scale) {
+    const now = performance.now();
+    for (const f of fx) {
+      if (f.kind !== 'plume' || f.who !== who) continue;
+      const k = 1 - (now - f.t0) / f.life;
+      if (k <= 0) continue;
+      const d = dir(f), l = Math.hypot(d[0], d[1]) || 1;
+      const flicker = calm() ? 1 : 0.8 + 0.2 * Math.sin(now / 30);
+      const L = scale * (0.5 + k) * flicker;
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, k * 1.4);
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - d[0] / l * L, y + d[1] / l * L);
+      ctx.strokeStyle = '#ffe2a0'; ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  let fitTop = 0;
+  function drawOrbitView() {
+    ctx.fillStyle = '#04060b'; ctx.fillRect(0, 0, W, H);
+    drawStars();
+    const { cx, cy, V } = viewBox();
+    // Earth takes 60% of the view; altitudes are stretched to fill the rest, so that orbits stay apart.
+    let top = 600;
+    for (const o of [S.you, S.tgt, planOrbit]) if (o) top = Math.max(top, C.elements(o).ra - C.RE);
+    top *= 1.12;
+    fitTop = !fitTop || calm() ? top : fitTop + (top - fitTop) * 0.15;
+    const Rd = V * 0.6, kA = (V - Rd) / fitTop;
+    const rho = r => (r >= C.RE ? Rd + (r - C.RE) * kA : r * Rd / C.RE);
+    const map = p => { const r = Math.hypot(p[0], p[1]), k = rho(r) / r; return [cx + p[0] * k, cy - p[1] * k]; };
+
+    // Earth's shadow: behind Earth, within an Earth radius of the line through the Sun
+    const rMax = C.RE + (Math.hypot(W, H) - Rd) / kA;
+    ctx.beginPath();
+    const N = 48;
+    for (let i = 0; i <= N; i++) { const r = C.RE + (rMax - C.RE) * (i / N) ** 2, a = Math.PI - Math.asin(C.RE / r); const q = map([r * Math.cos(a), r * Math.sin(a)]); if (i) ctx.lineTo(q[0], q[1]); else ctx.moveTo(q[0], q[1]); }
+    for (let i = N; i >= 0; i--) { const r = C.RE + (rMax - C.RE) * (i / N) ** 2, a = Math.PI + Math.asin(C.RE / r); const q = map([r * Math.cos(a), r * Math.sin(a)]); ctx.lineTo(q[0], q[1]); }
+    ctx.closePath(); ctx.fillStyle = 'rgba(0, 0, 0, 0.55)'; ctx.fill();
+
+    // the Earth, lit from the right, turning once a sidereal day
+    ctx.save();
+    ctx.beginPath(); ctx.arc(cx, cy, Rd, 0, C.TAU); ctx.fillStyle = '#0b1830'; ctx.fill(); ctx.clip();
+    const g = ctx.createLinearGradient(cx - Rd * 0.1, 0, cx + Rd, 0);
+    g.addColorStop(0, 'rgba(36, 98, 170, 0)'); g.addColorStop(0.12, 'rgba(36, 98, 170, 0.92)'); g.addColorStop(1, '#4b9ed8');
+    ctx.fillStyle = g; ctx.fillRect(cx - Rd * 0.1, cy - Rd, Rd * 1.1 + 2, Rd * 2);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.07)'; ctx.lineWidth = 1;
+    ctx.beginPath();
+    const spin = S.t * C.TAU / 86164;
+    for (let i = 0; i < 12; i++) { const a = -(spin + i * C.TAU / 12); ctx.moveTo(cx, cy); ctx.lineTo(cx + Rd * Math.cos(a), cy + Rd * Math.sin(a)); }
+    for (const lat of [30, 60]) { const r = Rd * Math.cos(lat * C.DEG); ctx.moveTo(cx + r, cy); ctx.arc(cx, cy, r, 0, C.TAU); }
+    ctx.stroke();
+    ctx.restore();
+    ring(cx, cy, Rd + 1.5, 'rgba(110, 180, 255, 0.35)', 3);
+
+    // the Sun, off to the right
+    const sx = Math.min(W - 16, cx + V + 30), sun = ctx.createRadialGradient(sx, cy, 0, sx, cy, 16);
+    sun.addColorStop(0, 'rgba(255, 220, 120, 0.9)'); sun.addColorStop(1, 'rgba(255, 220, 120, 0)');
+    ctx.fillStyle = sun; ctx.fillRect(sx - 16, cy - 16, 32, 32);
+    dot(sx, cy, 4.5, COL.sun);
+    label('SUN', sx, cy + 18, COL.sun, 'center');
+
+    // orbits
+    polyline(orbitPoints(S.tgt, 200).map(map), COL.tgt, 1.25, null, 0.75);
+    polyline(orbitPoints(S.you, 200).map(map), COL.you, 1.5, null, 0.9);
+    const mine = planOrbit || S.you;
+    if (planOrbit) {
+      const P = C.elements(planOrbit).P, pts = [];
+      for (let i = 0; i <= 200; i++) pts.push(map(C.propagate(planOrbit, S.t + P * i / 200).r));
+      polyline(pts, COL.plan, 1.25, [5, 4], 0.95);
+    }
+    // apoapsis and periapsis of the orbit you have, or the one you've planned
+    const el = C.elements(mine), here = map(C.propagate(S.you, S.t).r);
+    if (el.e > 0.002) {
+      for (const [apo, name] of [[true, 'Ap'], [false, 'Pe']]) {
+        const ang = el.w + (apo ? Math.PI : 0), r = apo ? el.ra : el.rp, q = map([r * Math.cos(ang), r * Math.sin(ang)]);
+        if (Math.hypot(q[0] - here[0], q[1] - here[1]) < 24) continue;   // you are there: your own label will do
+        dot(q[0], q[1], 2.5, planOrbit ? COL.plan : COL.you);
+        const out = [Math.cos(ang), -Math.sin(ang)];
+        label(name + ' ' + Math.round(r - C.RE) + ' km', q[0] + out[0] * 14, q[1] + out[1] * 12, COL.dim, out[0] < -0.3 ? 'right' : out[0] > 0.3 ? 'left' : 'center');
+      }
+    }
+    // closest approach
+    const ca = caPlan || (planOrbit ? null : caCur);
+    if (ca && ca.d < 300 && !S.dead) {
+      const pa = map(C.propagate(mine, ca.t).r), pb = map(C.propagate(S.tgt, ca.t).r);
+      ctx.save(); ctx.setLineDash([2, 3]);
+      ctx.beginPath(); ctx.moveTo(pa[0], pa[1]); ctx.lineTo(pb[0], pb[1]); ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 1; ctx.stroke();
+      ctx.restore();
+      ring(pa[0], pa[1], 5, planOrbit ? COL.plan : COL.you, 1.25);
+      ring(pb[0], pb[1], 5, COL.tgt, 1.25);
+      const mx = (pa[0] + pb[0]) / 2, my = (pa[1] + pb[1]) / 2, ox = mx - cx, oy = my - cy, ol = Math.hypot(ox, oy) || 1;
+      label(fmtDist(ca.d) + ' in ' + fmtClock(ca.t - S.t), mx + ox / ol * 16, my + oy / ol * 16, planOrbit ? COL.plan : COL.ok, ox < 0 ? 'right' : 'left');
+    }
+    // debris
+    if (S.debris) for (const d of S.debris) { const q = map(C.propagate(d, S.t).r); ctx.fillStyle = COL.warn; ctx.fillRect(q[0] - 1, q[1] - 1, 2, 2); }
+    // the two satellites
+    const me = C.propagate(S.you, S.t), tg = C.propagate(S.tgt, S.t);
+    const pm = map(me.r), pt = map(tg.r);
+    const close = Math.hypot(pm[0] - pt[0], pm[1] - pt[1]) < 26;
+    if (!S.dead) {
+      diamond(pt[0], pt[1], 5, COL.tgt, true);
+      plumeFx(pt[0], pt[1], () => [0, 1], 'tgt', 10);
+      const oT = [pt[0] - cx, pt[1] - cy], lT = Math.hypot(oT[0], oT[1]) || 1;
+      label('TARGET', pt[0] + oT[0] / lT * 16, pt[1] + oT[1] / lT * 14 - (close ? 8 : 0), COL.tgt, oT[0] < -0.3 * lT ? 'right' : oT[0] > 0.3 * lT ? 'left' : 'center');
+    }
+    if (!(S.over && S.over.how === 'ram')) {
+      const F = C.frame(me);
+      plumeFx(pm[0], pm[1], f => { const d = f.dir; const x = F.ah[0] * d[0] + F.rh[0] * d[1], y = F.ah[1] * d[0] + F.rh[1] * d[1]; return [x, y]; }, 'you', 12);
+      dot(pm[0], pm[1], 4, COL.you);
+      const oY = [pm[0] - cx, pm[1] - cy], lY = Math.hypot(oY[0], oY[1]) || 1;
+      label('YOU', pm[0] + oY[0] / lY * 15, pm[1] + oY[1] / lY * 13 + (close ? 8 : 0), COL.you, oY[0] < -0.3 * lY ? 'right' : oY[0] > 0.3 * lY ? 'left' : 'center');
+    }
+  }
+
+  let zoomKm = 0, manualZoom = 0;
+  function niceStep(x) {
+    const steps = [0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000];
+    return steps.find(s => s >= x) || 5000;
+  }
+  function wedge(cx, cy, r, a0, a1, color) {   // a0 < a1, in math angles (counterclockwise, y up)
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, r, -a1, -a0); ctx.closePath(); ctx.fillStyle = color; ctx.fill();
+  }
+  function drawCloseView() {
+    const tg = C.propagate(S.tgt, S.t), me = C.propagate(S.you, S.t);
+    const rel = C.toLocal(tg, me.r), range = Math.hypot(rel[0], rel[1]);
+    const tgLit = C.sunlit(tg.r);
+    ctx.fillStyle = tgLit ? '#07101c' : '#020306'; ctx.fillRect(0, 0, W, H);
+    const { cx, cy, V } = viewBox();
+    const want = manualZoom || Math.max(range * 1.3, 1.5);
+    zoomKm = !zoomKm || calm() ? want : zoomKm * Math.pow(want / zoomKm, 0.18);
+    const k = V / zoomKm, far = Math.hypot(W, H);
+    const P = q => [cx + q[0] * k, cy - q[1] * k];
+    const F = C.frame(tg);
+
+    // where the target sees the Earth behind things, and the Sun's glare
+    const rho = Math.asin(C.RE / C.len(tg.r));
+    wedge(cx, cy, far, -Math.PI / 2 - rho, -Math.PI / 2 + rho, 'rgba(60, 120, 200, 0.10)');
+    label('Earth behind you', cx, Math.min(H - 70, cy + V * 0.92), 'rgba(120, 170, 230, 0.8)', 'center');
+    const sunA = Math.atan2(C.dot(C.SUN, F.rh), C.dot(C.SUN, F.ah));
+    if (tgLit) {
+      wedge(cx, cy, far, sunA - C.GLARE, sunA + C.GLARE, 'rgba(255, 211, 107, 0.13)');
+      const lr = V * 0.8;
+      label('Sun glare', cx + Math.cos(sunA) * lr, cy - Math.sin(sunA) * lr, COL.sun, 'center');
+    }
+
+    // Where the target would notice you: how close you could come from each direction before its suspicion rose.
+    if (!S.dead && S.alert < 2) {
+      const edge = [];
+      for (let i = 0; i <= 144; i++) {
+        const a = i * C.TAU / 144, e = C.seenBy(S, tg, a), q = P([e.d * Math.cos(a), e.d * Math.sin(a)]);
+        edge.push({ x: clampPx(q[0]), y: clampPx(q[1]), by: e.by });
+      }
+      ctx.beginPath();
+      for (const q of edge) ctx.lineTo(q.x, q.y);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(255, 93, 93, 0.07)'; ctx.fill();
+      // the outline is drawn in the color of the sensor that would notice you there
+      ctx.save(); ctx.setLineDash([3, 3]); ctx.lineWidth = 1.25; ctx.globalAlpha = 0.8;
+      const used = new Set();
+      for (let i = 0; i < 144;) {
+        const by = edge[i].by;
+        used.add(by);
+        ctx.beginPath(); ctx.moveTo(edge[i].x, edge[i].y);
+        do { i++; ctx.lineTo(edge[i].x, edge[i].y); } while (i < 144 && edge[i].by === by);
+        ctx.strokeStyle = SENSOR[by].col; ctx.stroke();
+      }
+      ctx.restore();
+      const aMe = Math.atan2(rel[1], rel[0]), me = C.seenBy(S, tg, aMe), Rme = me.d, qm = P([Rme * Math.cos(aMe), Rme * Math.sin(aMe)]);
+      const meq = P(rel), roomy = Rme * k > 64 && Math.hypot(qm[0] - meq[0], qm[1] - meq[1]) > 30;
+      if (roomy && qm[0] > 50 && qm[0] < W - 50 && qm[1] > 80 && qm[1] < H - 70) label(SENSOR[me.by].sees + ' inside ' + fmtDist(Rme), qm[0], qm[1] - 9, SENSOR[me.by].col, 'center');
+      seenKey = Object.keys(SENSOR).filter(by => used.has(by)).join(' ');
+    }
+
+    // range rings
+    const step = niceStep(zoomKm / 2.5);
+    for (let r = step; r <= zoomKm * 1.8; r += step) ring(cx, cy, r * k, 'rgba(140, 170, 210, 0.16)', 1);
+    for (let r = step; r <= zoomKm * 1.8; r += step) label(r < 1 ? Math.round(r * 1000) + ' m' : +r.toFixed(1) + ' km', cx + r * k * 0.707 + 3, cy - r * k * 0.707 - 3, 'rgba(141, 156, 178, 0.75)');
+    ctx.beginPath(); ctx.moveTo(0, cy); ctx.lineTo(W, cy); ctx.moveTo(cx, 0); ctx.lineTo(cx, H);
+    ctx.strokeStyle = 'rgba(140, 170, 210, 0.08)'; ctx.lineWidth = 1; ctx.stroke();
+    const strikePx = C.STRIKE * k;
+    if (strikePx > 6) {
+      ctx.save(); ctx.setLineDash([2, 4]);
+      ring(cx, cy, strikePx, 'rgba(85, 214, 234, 0.7)', 1.5);
+      ctx.restore();
+      // on the ring, left of center and a little low: the corners are taken by the read-outs
+      if (strikePx > 28) label('strike 5 km', cx - strikePx * 0.94 + 4, cy + strikePx * 0.34 + 2, 'rgba(85, 214, 234, 0.9)');
+    }
+    label('ahead ▸', W - 10, cy - 10, COL.dim, 'right');
+    label('◂ behind', 10, cy - 10, COL.dim, 'left');
+
+    // your past and future, seen from the target
+    if (trail.length > 1) polyline(trail.map(q => P(q.p)), COL.you, 1.25, null, 0.35);
+    const Hc = Math.min(C.elements(S.tgt).P, horizon());
+    const path = o => { const pts = []; for (let i = 0; i <= 180; i++) { const t = S.t + Hc * i / 180; pts.push(P(C.toLocal(C.propagate(S.tgt, t), C.propagate(o, t).r))); } return pts; };
+    if (!S.dead) {
+      polyline(path(S.you), COL.you, 1.5, null, planOrbit ? 0.45 : 0.85);
+      if (planOrbit) polyline(path(planOrbit), COL.plan, 1.5, [5, 4], 0.95);
+      const ca = planOrbit ? caPlan : caCur, o = planOrbit || S.you;
+      if (ca && ca.t - S.t < Hc) {
+        const q = P(C.toLocal(C.propagate(S.tgt, ca.t), C.propagate(o, ca.t).r));
+        ring(q[0], q[1], 5, planOrbit ? COL.plan : COL.ok, 1.25);
+        label(fmtDist(ca.d) + ' in ' + fmtClock(ca.t - S.t), q[0] + 9, q[1] - 9, planOrbit ? COL.plan : COL.ok);
+      }
+    }
+
+    // the target, debris, decoys and the interceptor
+    if (!S.dead) {
+      diamond(cx, cy, 7, COL.tgt, true);
+      plumeFx(cx, cy, () => [0, 1], 'tgt', 18);
+      label('TARGET', cx, cy - 16, COL.tgt, 'center');
+    }
+    if (S.debris) {
+      ctx.fillStyle = COL.warn;
+      for (const d of S.debris) { const q = P(C.toLocal(tg, C.propagate(d, S.t).r)); ctx.fillRect(q[0] - 1.5, q[1] - 1.5, 3, 3); }
+      const since = S.t - S.over.t;
+      if (since < 1.5 && !calm()) { ctx.save(); ctx.globalAlpha = 1 - since / 1.5; dot(cx, cy, 8 + since * 40, '#fff2c8'); ctx.restore(); }
+    }
+    const decoyAge = S.shot && !S.shot.hit && S.t > S.shot.tDecoy ? S.t - S.shot.tDecoy : null;
+    const decoyFx = fx.find(f => f.kind === 'decoys');
+    if (decoyAge !== null || decoyFx) {
+      const age = decoyAge !== null ? decoyAge : 3 + (performance.now() - decoyFx.t0) / 1000;
+      for (let i = 0; i < 6; i++) {
+        const a = i * C.TAU / 6 + 0.4, r = Math.min(40, 6 + age * 5);
+        dot(cx + Math.cos(a) * r, cy - Math.sin(a) * r, 2.5, '#fff1b8');
+      }
+    }
+    if (S.shot) {
+      const f = Math.max(0, Math.min(1, (S.t - S.shot.t0) / (S.shot.tHit - S.shot.t0)));
+      const sp = S.shot.from, q = P([sp[0] * (1 - f), sp[1] * (1 - f)]);
+      const q0 = P([sp[0] * (1 - Math.max(0, f - 0.08)), sp[1] * (1 - Math.max(0, f - 0.08))]);
+      ctx.beginPath(); ctx.moveTo(q0[0], q0[1]); ctx.lineTo(q[0], q[1]); ctx.strokeStyle = '#ffe2a0'; ctx.lineWidth = 2; ctx.stroke();
+      dot(q[0], q[1], 3, '#ffffff');
+    }
+
+    // you
+    if (!(S.over && S.over.how === 'ram')) {
+      const q = P(rel);
+      const inside = q[0] > 6 && q[0] < W - 6 && q[1] > 6 && q[1] < H - 6;
+      if (inside) {
+        plumeFx(q[0], q[1], f => f.dir, 'you', 18);
+        dot(q[0], q[1], 5, COL.you);
+        label('YOU ' + fmtDist(range), q[0] + 9, q[1] + 11, COL.you);
+      } else {
+        const a = Math.atan2(cy - q[1], q[0] - cx), ex = cx + Math.cos(a) * (Math.min(W, H) / 2 - 22), ey = cy - Math.sin(a) * (Math.min(W, H) / 2 - 22);
+        ctx.save(); ctx.translate(ex, ey); ctx.rotate(-a);
+        ctx.beginPath(); ctx.moveTo(10, 0); ctx.lineTo(-4, -6); ctx.lineTo(-4, 6); ctx.closePath(); ctx.fillStyle = COL.you; ctx.fill();
+        ctx.restore();
+        label('YOU ' + fmtDist(range), ex, ey + (ey < cy ? 16 : -16), COL.you, 'center');
+      }
+    }
+    if (manualZoom) label('zoom: double-tap for auto', 10, H - 76, COL.dim);
+  }
+
+  // ---------- the burn pad ----------
+  const padMax = () => (S ? (gas ? S.m.gas : S.m.main) : 1);
+  function drawPad() {
+    const s = pad.width / DPR;
+    if (!s) return;
+    pctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    pctx.clearRect(0, 0, s, s);
+    const c = s / 2, R = c - 8;
+    pctx.beginPath(); pctx.arc(c, c, R + 6, 0, C.TAU); pctx.fillStyle = '#0d1520'; pctx.fill();
+    pctx.strokeStyle = '#2c3b53'; pctx.lineWidth = 1;
+    pctx.beginPath(); pctx.arc(c, c, R, 0, C.TAU); pctx.stroke();
+    pctx.beginPath(); pctx.arc(c, c, R * 0.5, 0, C.TAU); pctx.stroke();   // a quarter of the propellant
+    pctx.beginPath(); pctx.moveTo(c - R, c); pctx.lineTo(c + R, c); pctx.moveTo(c, c - R); pctx.lineTo(c, c + R); pctx.stroke();
+    pctx.font = '9px ' + MONO; pctx.fillStyle = '#8d9cb2'; pctx.textBaseline = 'middle';
+    pctx.textAlign = 'right'; pctx.fillText('PRO', c + R - 2, c - 7);
+    pctx.textAlign = 'left'; pctx.fillText('RETRO', c - R + 2, c - 7);
+    pctx.textAlign = 'center'; pctx.fillText('OUT', c + 14, c - R + 7); pctx.fillText('IN', c + 10, c + R - 7);
+    if (!S) return;
+    const m = Math.hypot(plan.pro, plan.out);
+    if (m > 0) {
+      const rr = Math.min(1, Math.sqrt(m / padMax())) * R, a = Math.atan2(plan.out, plan.pro);
+      const x = c + Math.cos(a) * rr, y = c - Math.sin(a) * rr;
+      const over = m > (gas ? S.gas : S.main) + 1e-9;
+      pctx.beginPath(); pctx.moveTo(c, c); pctx.lineTo(x, y); pctx.strokeStyle = over ? COL.bad : COL.plan; pctx.lineWidth = 2; pctx.stroke();
+      pctx.beginPath(); pctx.arc(x, y, 6, 0, C.TAU); pctx.fillStyle = over ? COL.bad : COL.plan; pctx.fill();
+    } else {
+      pctx.beginPath(); pctx.arc(c, c, 4, 0, C.TAU); pctx.fillStyle = '#5d6c82'; pctx.fill();
+    }
+  }
+  const roundDv = x => (gas ? Math.round(x * 100) / 100 : Math.round(x * 10) / 10);
+  function setPlan(pro, out) {
+    plan = { pro: roundDv(pro) || 0, out: roundDv(out) || 0 };
+    kick();
+  }
+  // The burn at (x, y) on the pad, in units of its radius, for a pad whose rim is max m/s, in steps of step m/s.
+  // Each part is rounded toward zero, so the burn is never more than max: rounding both up could take a burn
+  // on the rim past the propellant you have, and the pad would flicker red.
+  function padPlan(x, y, max, step) {
+    let rr = Math.min(1, Math.hypot(x, y)), a = Math.atan2(y, x);
+    const axis = Math.round(a / (Math.PI / 2)) * (Math.PI / 2);
+    if (Math.abs(a - axis) < 0.08) a = axis;   // snap to the four directions
+    if (rr < 0.05) rr = 0;
+    const m = max * rr * rr;   // squared, for fine control near the middle
+    const toward0 = v => Math.trunc(v / step + 1e-9 * Math.sign(v)) * step;   // the nudge keeps 0.3 from becoming 0.29999
+    return { pro: toward0(m * Math.cos(a)), out: toward0(m * Math.sin(a)) };
+  }
+  let padDrag = null;
+  function padAt(e) {
+    const r = pad.getBoundingClientRect(), R = r.width / 2 - 8;
+    const x = (e.clientX - r.left - r.width / 2) / R, y = -(e.clientY - r.top - r.height / 2) / R;
+    const p = padPlan(x, y, padMax(), gas ? 0.01 : 0.1);
+    setPlan(p.pro, p.out);
+  }
+  pad.addEventListener('pointerdown', e => {
+    if (!S || S.over || !e.isPrimary || e.button > 0) return;
+    padDrag = e.pointerId; pad.setPointerCapture(e.pointerId); padAt(e);
+  });
+  pad.addEventListener('pointermove', e => { if (padDrag === e.pointerId) padAt(e); });
+  const padUp = e => { if (padDrag === e.pointerId) padDrag = null; };
+  pad.addEventListener('pointerup', padUp);
+  pad.addEventListener('pointercancel', padUp);
+
+  function nudge(axis, dir, coarse) {
+    if (!S || S.over) return;
+    const stepSize = (gas ? 0.01 : 0.1) * (coarse ? 10 : 1);
+    const p = { pro: plan.pro, out: plan.out };
+    p[axis] = Math.round((p[axis] + dir * stepSize) / stepSize) * stepSize;
+    setPlan(p.pro, p.out);
+  }
+  // + and − repeat while held
+  let repeat = 0;
+  const stopRepeat = () => { clearTimeout(repeat); repeat = 0; };
+  for (const b of document.querySelectorAll('.step')) {
+    const go = () => nudge(b.dataset.axis, +b.dataset.dir, false);
+    b.addEventListener('pointerdown', e => {
+      if (!e.isPrimary || e.button > 0) return;
+      go();
+      let wait = 380;
+      const again = () => { go(); wait = Math.max(50, wait * 0.8); repeat = setTimeout(again, wait); };
+      stopRepeat(); repeat = setTimeout(again, wait);
+    });
+    for (const t of ['pointerup', 'pointerleave', 'pointercancel']) b.addEventListener(t, stopRepeat);
+    b.addEventListener('click', e => { if (e.detail === 0) go(); });   // keyboard
+  }
+
+  // ---------- read-outs ----------
+  // Only touch the page when a read-out changes.
+  const shown = new Map(), attrs = new Map();
+  function put(el, text) { if (shown.get(el) !== text) { shown.set(el, text); el.textContent = text; } }
+  function attr(el, name, value) {
+    if (!attrs.has(el)) attrs.set(el, {});
+    const was = attrs.get(el);
+    if (was[name] !== value) { was[name] = value; el.setAttribute(name, value); }
+  }
+  function bar(el, frac) { attr(el, 'style', 'transform: scaleX(' + Math.max(0, Math.min(1, frac)).toFixed(3) + ')'); }
+  function hud() {
+    const now = performance.now();
+    const msg = now < toast.until ? toast : { text: hint(), tone: 'hint' };
+    put(E.toast, msg.text); attr(E.toast, 'data-tone', msg.tone || '');
+    if (!S) return;
+    const m = S.m;
+    put(E.clock, 'T+' + fmtClock(S.t));
+    put(E.left, fmtClock(m.time - S.t) + ' left');
+    const chosen = skip ? 1000 : WARPS[warpIdx];
+    put(E['warp-info'], paused ? 'Paused' : '×' + effWarp + (skip ? ' to ' + skip.label : effWarp < chosen ? ' (target near)' : ''));
+    put(E.light, S.lit ? 'Sunlit' : 'In shadow'); attr(E.light, 'data-lit', String(S.lit));
+    put(E['warp-v'], '×' + WARPS[warpIdx]);
+    put(E['btn-pause'], paused ? 'Run' : 'Pause'); attr(E['btn-pause'], 'aria-label', paused ? 'Run' : 'Pause');
+
+    // resources
+    bar(E['main-bar'], S.main / m.main); put(E['main-v'], S.main.toFixed(1) + ' m/s');
+    bar(E['gas-bar'], S.gas / m.gas); put(E['gas-v'], S.gas.toFixed(2) + ' m/s');
+    bar(E['pwr-bar'], S.batt / 100); put(E['pwr-v'], (S.brownout ? 'flat ' : '') + Math.round(S.batt) + '%');
+    attr(E.pwr, 'data-low', String(S.batt < 20 || S.brownout));
+    put(E['kv-v'], '●'.repeat(S.kv) + '○'.repeat(Math.max(0, m.kv - S.kv)));
+    attr(E['e-main'], 'aria-pressed', String(!gas)); attr(E['e-gas'], 'aria-pressed', String(gas));
+
+    // the target
+    const a = C.propagate(S.you, S.t), b = C.propagate(S.tgt, S.t), range = C.len(C.sub(a.r, b.r));
+    if (S.dead) { put(E['i-range'], 'destroyed'); put(E['i-closing'], ''); }
+    else {
+      put(E['i-range'], fmtDist(range));
+      const rr = C.rangeRate(S.you, S.tgt, S.t) * 1000;
+      put(E['i-closing'], Math.abs(rr) < 0.05 ? 'holding' : (rr < 0 ? 'closing ' : 'opening ') + fmtSpeed(rr));
+    }
+    const none = 'none within ' + Math.max(1, Math.round(horizon() / 3600)) + ' h';
+    put(E['i-ca'], S.dead ? '—' : caCur ? fmtCa(caCur) : none);
+    E['r-plan'].hidden = !planOrbit;
+    E['r-seen'].hidden = !seenKey;
+    if (shown.get(E['i-seen']) !== seenKey) {
+      shown.set(E['i-seen'], seenKey);
+      E['i-seen'].replaceChildren(...(seenKey ? seenKey.split(' ') : []).flatMap((by, i) => {
+        const b = document.createElement('b');
+        b.textContent = SENSOR[by].name; b.style.color = SENSOR[by].col;
+        return i ? [', ', b] : [b];
+      }));
+    }
+    if (planOrbit) put(E['i-plan'], caPlan ? fmtCa(caPlan) : none);
+    const sol = C.solution(S);
+    const showStrike = !S.dead && range <= C.STRIKE * 1.6 && S.kv > 0;
+    E['r-strike'].hidden = !showStrike;
+    if (showStrike) {
+      if (S.shot) { put(E['i-strike'], 'interceptor in flight'); attr(E['r-strike'], 'data-hit', ''); }
+      else if (sol.range > C.STRIKE) { put(E['i-strike'], 'out of range'); attr(E['r-strike'], 'data-hit', ''); }
+      else {
+        // a hit if the interceptor gets there before the target can react, or if it has no decoys to react with
+        const race = 'flight ' + sol.tof.toFixed(0) + ' s, react ' + sol.react + ' s';
+        put(E['i-strike'], S.decoys <= 0 ? 'no decoys left: hit' : sol.hit ? race + ': hit' : race + ': decoyed');
+        attr(E['r-strike'], 'data-hit', String(sol.hit));
+      }
+    }
+    E['btn-fire'].disabled = !sol.ok;
+    put(E['btn-fire'], S.shot ? 'IN FLIGHT' : 'FIRE');
+    attr(E['btn-jam'], 'aria-pressed', String(S.jam));
+    E['btn-jam'].disabled = S.over !== null || S.brownout;
+
+    // suspicion
+    const lvl = S.alert, R = S.rates;
+    attr(E.det, 'data-level', String(lvl));
+    attr(E['det-fill'], 'style', 'width: ' + S.susp.toFixed(1) + '%');
+    put(E['det-state'], S.dead ? 'Target destroyed' : ['Unaware', 'Suspicious', 'Alerted'][lvl]);
+    put(E['det-pct'], S.dead ? '' : Math.round(S.susp) + '%');
+    let why = '';
+    if (!S.dead && R && lvl < 2) {
+      const rise = (R.opt + R.ir + R.radar + R.jam) * C.GAIN[lvl], net = (rise - C.DECAY) * 60;
+      const parts = [];
+      if (R.hidden) parts.push('the Earth is between you');
+      else {
+        // what gives you away, while anything does, and what is hiding you
+        const seen = [['sunlight', R.opt], ['heat', R.ir], ['radar', R.radar], ['jamming', R.jam]].filter(x => x[1] > 0.2 * rise);
+        if (net > 0.05) parts.push(seen.map(x => x[0]).join(', '));
+        const cover = [];
+        if (!R.lit) cover.push('shadow');
+        if (R.glare) cover.push('glare');
+        if (R.earth) cover.push('Earth behind');
+        if (cover.length) parts.push('cover: ' + cover.join(', '));
+      }
+      why = (net > 0.05 ? '▲ ' + net.toFixed(0) + '%/min' : S.susp > 0 ? '▼ fading' : 'quiet') + (parts.length ? ' · ' + parts.join(' · ') : '');
+    } else if (lvl === 2 && !S.dead) {
+      why = 'dodges left ' + S.evades + ' · decoys ' + S.decoys;
+    }
+    put(E['det-why'], why);
+
+    // the plan
+    put(E['pro-v'], signed(fmtDv(plan.pro)));
+    put(E['out-v'], signed(fmtDv(plan.out)));
+    const dv = Math.hypot(plan.pro, plan.out), have = gas ? S.gas : S.main;
+    const orbit = C.elements(planOrbit || S.you);
+    const shape = Math.round(orbit.rp - C.RE) + ' × ' + Math.round(orbit.ra - C.RE) + ' km';
+    let info;
+    if (dv > 0) info = (dv > have + 1e-9 ? '<span class="bad">' : '<span>') + 'Δv ' + fmtDv(dv) + ' of ' + have.toFixed(gas ? 2 : 1) + ' m/s</span><br>→ orbit ' + shape;
+    else info = 'No burn planned<br>orbit ' + shape;
+    if (shown.get(E['dv-info']) !== info) { shown.set(E['dv-info'], info); E['dv-info'].innerHTML = info; }
+    E['btn-burn'].disabled = !(dv > 0) || dv > have + 1e-9 || S.over !== null || S.brownout;
+    put(E['btn-burn'], dv > 0 ? 'Burn ' + fmtDv(dv) : 'Burn');
+    E['btn-clear'].disabled = !(dv > 0);
+    for (const btn of skipBtns) {
+      const k = btn.dataset.skip;
+      if (k === 'shade') put(btn, S.lit ? 'Shadow' : 'Sunlight');
+      btn.disabled = S.over !== null || skipTarget(k) === null;
+    }
+  }
+
+  // ---------- actions ----------
+  function skipTarget(k) {
+    if (!S || S.over) return null;
+    if (k === 'apo' || k === 'peri') { const t = C.nextApsis(S.you, S.t, k === 'apo'); return t === null ? null : { t, label: k === 'apo' ? 'apoapsis' : 'periapsis' }; }
+    if (k === 'ca') return caCur && !S.dead && caCur.t - S.t > 75 ? { t: caCur.t - 60, label: 'a minute before closest approach' } : null;
+    const t = C.nextLight(S.you, S.t, !S.lit);
+    return t === null ? null : { t, label: S.lit ? 'Earth\'s shadow' : 'sunlight' };
+  }
+  function doSkip(k) { const t = skipTarget(k); if (!t) return; skip = t; paused = false; kick(); }
+  function doBurn() {
+    if (!S || S.over) return;
+    if (C.burn(S, plan.pro, plan.out, gas)) { plan = { pro: 0, out: 0 }; predict(); kick(); }   // fresh predictions, for a skip straight after
+  }
+  function doFire() { if (S && C.fire(S)) kick(); }
+  function doJam() { if (S && C.setJam(S, !S.jam)) { say(S.jam ? 'Jammer on: the target\'s radar range is cut to a quarter. It drains the battery, and the target can hear it close in.' : 'Jammer off.'); kick(); } }
+  function setGas(g) { gas = g; setPlan(plan.pro, plan.out); }
+  function setView(v) {
+    view = v; manualZoom = 0; zoomKm = 0;
+    attr(E['v-orbit'], 'aria-pressed', String(v === 'orbit')); attr(E['v-close'], 'aria-pressed', String(v === 'close'));
+    cv.setAttribute('aria-label', v === 'orbit' ? 'Orbit view: Earth, your orbit and the target\'s' : 'Close-in view, centered on the target');
+    kick();
+  }
+
+  E['btn-burn'].addEventListener('click', doBurn);
+  E['btn-clear'].addEventListener('click', () => setPlan(0, 0));
+  E['btn-fire'].addEventListener('click', doFire);
+  E['btn-jam'].addEventListener('click', doJam);
+  E['e-main'].addEventListener('click', () => setGas(false));
+  E['e-gas'].addEventListener('click', () => setGas(true));
+  E['btn-pause'].addEventListener('click', () => setPaused(!paused));
+  E['btn-slower'].addEventListener('click', () => setWarp(warpIdx - 1));
+  E['btn-faster'].addEventListener('click', () => setWarp(warpIdx + 1));
+  for (const b of skipBtns) b.addEventListener('click', () => doSkip(b.dataset.skip));
+  E['v-orbit'].addEventListener('click', () => setView('orbit'));
+  E['v-close'].addEventListener('click', () => setView('close'));
+  $('#btn-menu').addEventListener('click', openMenu);
+
+  // zooming the close-in view: wheel, pinch, double-tap to go back to automatic
+  cv.addEventListener('wheel', e => {
+    if (view !== 'close') return;
+    e.preventDefault();
+    manualZoom = Math.max(0.2, Math.min(20000, (manualZoom || zoomKm) * Math.pow(1.0015, e.deltaY)));
+    kick();
+  }, { passive: false });
+  const touches = new Map();
+  let pinch = null, lastTap = 0;
+  cv.addEventListener('pointerdown', e => {
+    touches.set(e.pointerId, [e.clientX, e.clientY]);
+    if (touches.size === 2) { const [p, q] = [...touches.values()]; pinch = { d: Math.hypot(p[0] - q[0], p[1] - q[1]), z: manualZoom || zoomKm }; }
+    const now = performance.now();
+    if (touches.size === 1 && now - lastTap < 320 && view === 'close') { manualZoom = 0; kick(); }
+    lastTap = now;
+  });
+  cv.addEventListener('pointermove', e => {
+    if (!touches.has(e.pointerId)) return;
+    touches.set(e.pointerId, [e.clientX, e.clientY]);
+    if (pinch && touches.size === 2 && view === 'close') {
+      const [p, q] = [...touches.values()], d = Math.hypot(p[0] - q[0], p[1] - q[1]);
+      if (d > 10) { manualZoom = Math.max(0.2, Math.min(20000, pinch.z * pinch.d / d)); kick(); }
+    }
+  });
+  const lift = e => { touches.delete(e.pointerId); if (touches.size < 2) pinch = null; };
+  cv.addEventListener('pointerup', lift);
+  cv.addEventListener('pointercancel', lift);
+
+  // After a tap or click (not a keyboard press), take focus off the button, so Space pauses rather than pressing it again.
+  document.addEventListener('click', e => {
+    const b = e.target.closest && e.target.closest('#panel button, #stage button');
+    if (b && e.detail > 0) b.blur();
+  });
+  window.addEventListener('keydown', e => {
+    if (!S || document.querySelector('dialog[open]') || e.ctrlKey || e.metaKey || e.altKey) return;
+    const k = e.key, big = e.shiftKey;
+    const map = {
+      ArrowRight: () => nudge('pro', 1, big), d: () => nudge('pro', 1, big), D: () => nudge('pro', 1, big),
+      ArrowLeft: () => nudge('pro', -1, big), a: () => nudge('pro', -1, big), A: () => nudge('pro', -1, big),
+      ArrowUp: () => nudge('out', 1, big), w: () => nudge('out', 1, big), W: () => nudge('out', 1, big),
+      ArrowDown: () => nudge('out', -1, big), s: () => nudge('out', -1, big), S: () => nudge('out', -1, big),
+      Enter: doBurn, Backspace: () => setPlan(0, 0), Delete: () => setPlan(0, 0),
+      g: () => setGas(!gas), G: () => setGas(!gas), j: doJam, J: doJam, f: doFire, F: doFire,
+      ' ': () => setPaused(!paused), '+': () => setWarp(warpIdx + 1), '=': () => setWarp(warpIdx + 1),
+      '-': () => setWarp(warpIdx - 1), _: () => setWarp(warpIdx - 1),
+      1: () => doSkip('apo'), 2: () => doSkip('peri'), 3: () => doSkip('ca'), 4: () => doSkip('shade'),
+      v: () => setView(view === 'orbit' ? 'close' : 'orbit'), V: () => setView(view === 'orbit' ? 'close' : 'orbit'),
+      Escape: openMenu, h: () => openHelp(null), '?': () => openHelp(null),
+    };
+    if (!map[k]) return;
+    // let a focused button take its own Enter and Space
+    if ((k === 'Enter' || k === ' ') && e.target instanceof HTMLButtonElement) return;
+    e.preventDefault();
+    map[k]();
+  });
+
+  // ---------- missions and dialogs ----------
+  function intel(m) {
+    const T = m.target, lvl = x => (x <= 0 ? 'none' : x < 0.8 ? 'poor' : x <= 1.2 ? 'standard' : x <= 2 ? 'good' : 'sharp');
+    return [
+      ['Target', T.name + ', ' + T.kind],
+      ['Cameras', lvl(T.opt)], ['Infrared', lvl(T.ir)], ['Radar', T.radar ? lvl(T.radar) : 'none'],
+      ['Decoys', String(T.decoys)], ['Dodges', T.evades ? T.evades + ' burns of ' + T.evadeDv + ' m/s' : 'can\'t'],
+      ['Main engine', m.main + ' m/s'], ['Cold gas', m.gas + ' m/s'], ['Interceptors', String(m.kv)],
+      ['Time', fmtClock(m.time)], ['Par', m.par + ' m/s'],
+    ];
+  }
+  function fillDl(dl, rows) {
+    dl.textContent = '';
+    for (const [k, v] of rows) { const dt = document.createElement('dt'), dd = document.createElement('dd'); dt.textContent = k; dd.textContent = v; dl.append(dt, dd); }
+  }
+  function missionAt(i) { return i < C.MISSIONS.length ? C.MISSIONS[i] : C.randomMission(1 + Math.floor(Math.random() * 1e9)); }
+  function renderMissions() {
+    const ol = $('#missions');
+    ol.textContent = '';
+    C.MISSIONS.concat([{ id: 'random', name: 'Free hunt', short: 'A new target in a new orbit every time.' }]).forEach((m, i) => {
+      const li = document.createElement('li'), b = document.createElement('button');
+      b.className = 'mission'; b.type = 'button';
+      const n = document.createElement('span'); n.className = 'mname'; n.textContent = (i + 1) + '. ' + m.name;
+      const st = document.createElement('span'); st.className = 'mstars';
+      const best = progress.best[m.id];
+      st.textContent = best === undefined ? '' : stars(best);
+      st.setAttribute('aria-label', best === undefined ? 'not played' : best + ' of 3 stars');
+      const d = document.createElement('span'); d.className = 'mdesc'; d.textContent = m.short;
+      b.append(n, st, d);
+      b.addEventListener('click', () => openBrief(i));
+      li.append(b); ol.append(li);
+    });
+  }
+  function closeAll() { for (const d of Object.values(dlg)) if (d.open) d.close(); }
+  function openTitle() {
+    closeAll();
+    renderMissions();
+    $('#t-resume').hidden = !(S && !S.over);
+    if (S && !S.over) setPaused(true);
+    dlg.title.showModal();
+  }
+  function openBrief(i) {
+    missionIdx = i;
+    mission = missionAt(i);
+    closeAll();
+    $('#b-h').textContent = (i + 1) + '. ' + mission.name;
+    const box = $('#b-text');
+    box.textContent = '';
+    for (const p of mission.brief) { const el = document.createElement('p'); el.textContent = p; box.append(el); }
+    fillDl($('#b-intel'), intel(mission));
+    dlg.brief.showModal();
+  }
+  let menuWasPaused = true;
+  function openMenu() {
+    if (!S) return;
+    if (S.over) { openTitle(); return; }
+    menuWasPaused = paused;
+    setPaused(true);
+    closeAll();
+    $('#m-mission').textContent = (missionIdx + 1) + '. ' + S.m.name;
+    dlg.menu.showModal();
+  }
+  let helpReturn = null;
+  function openHelp(from) {
+    helpReturn = from;
+    if (!from && S && !S.over) { menuWasPaused = paused; setPaused(true); }
+    closeAll();
+    dlg.help.showModal();
+  }
+  function launch(m) {
+    closeAll();
+    mission = m;
+    S = C.start(m);
+    plan = { pro: 0, out: 0 }; gas = false; warpIdx = 0; skip = null; effWarp = 1; slowedFor = -1;
+    trail = []; fx = []; autoClosed = false; toast = { text: '', tone: '', until: 0 };
+    setView('orbit');
+    setPaused(false);
+    say(m.target.name + ': ' + m.short, '');
+  }
+  function gameOver() {
+    const o = S.over;
+    paused = false;
+    if (o.win) {
+      const got = 1 + (o.unseen ? 1 : 0) + (S.dvMain + S.dvGas <= S.m.par + 1e-9 ? 1 : 0);
+      if (!(progress.best[S.m.id] >= got)) { progress.best[S.m.id] = got; saveProgress(); }
+      say(o.how === 'ram' ? 'Collision! Both satellites are gone.' : 'Target destroyed.', 'ok');
+      if (view === 'orbit' && !autoClosed) setView('close');
+    } else {
+      say(o.how === 'time' ? 'Out of time.' : 'You burned up in the atmosphere.', 'bad');
+    }
+    const shown = S;
+    setTimeout(() => { if (S === shown && !testing) showDebrief(); }, o.win ? 2800 : 1500);
+  }
+  function showDebrief() {
+    const o = S.over, m = S.m;
+    closeAll();
+    $('#d-h').textContent = o.win ? (o.how === 'ram' ? 'Target destroyed, and you with it' : 'Target destroyed') : 'Mission failed';
+    $('#d-text').textContent = o.win
+      ? (o.how === 'ram' ? 'You rammed it. A kill is a kill, but that was the only interceptor satellite you had.'
+        : o.unseen ? ['It never knew you were there.', 'It was suspicious, but too late.'][Math.min(1, S.maxAlert)] : 'It saw you coming, and still couldn\'t get away.')
+      : o.how === 'time' ? 'Out of time: ' + m.target.name + ' is still up there.' : 'Your orbit dipped into the atmosphere, and you burned up.';
+    const ul = $('#d-stars');
+    ul.textContent = '';
+    const dv = S.dvMain + S.dvGas;
+    for (const [got, text] of [[o.win, 'Destroyed the target'], [o.win && o.unseen, 'Never alerted it'], [o.win && dv <= m.par + 1e-9, 'Used no more than ' + m.par + ' m/s (used ' + dv.toFixed(1) + ')']]) {
+      const li = document.createElement('li'); li.className = got ? 'got' : 'miss'; li.textContent = (got ? '★ ' : '☆ ') + text; ul.append(li);
+    }
+    fillDl($('#d-stats'), [
+      ['Mission time', fmtClock(S.t)], ['Main engine', S.dvMain.toFixed(1) + ' m/s'], ['Cold gas', S.dvGas.toFixed(2) + ' m/s'],
+      ['Peak suspicion', Math.round(S.maxSusp) + '%'], ['Interceptors used', String(m.kv - S.kv)],
+    ]);
+    $('#d-next').hidden = !o.win;
+    $('#d-next').textContent = missionIdx + 1 < C.MISSIONS.length ? 'Next mission' : missionIdx < C.MISSIONS.length ? 'Free hunt' : 'Another hunt';
+    dlg.debrief.showModal();
+  }
+
+  $('#t-help').addEventListener('click', () => openHelp(dlg.title));
+  $('#t-resume').addEventListener('click', () => { closeAll(); setPaused(false); });
+  $('#b-back').addEventListener('click', openTitle);
+  $('#b-go').addEventListener('click', () => launch(mission));
+  $('#m-resume').addEventListener('click', () => { closeAll(); setPaused(menuWasPaused); });
+  $('#m-help').addEventListener('click', () => openHelp(dlg.menu));
+  $('#m-restart').addEventListener('click', () => launch(missionIdx < C.MISSIONS.length ? C.MISSIONS[missionIdx] : mission));
+  $('#m-missions').addEventListener('click', openTitle);
+  $('#h-close').addEventListener('click', () => { const back = helpReturn; closeAll(); if (back) back.showModal(); else if (S && !S.over) setPaused(menuWasPaused); });
+  $('#d-missions').addEventListener('click', openTitle);
+  $('#d-retry').addEventListener('click', () => launch(missionIdx < C.MISSIONS.length ? C.MISSIONS[missionIdx] : C.randomMission(S.m.seed)));
+  $('#d-next').addEventListener('click', () => openBrief(Math.min(missionIdx + 1, C.MISSIONS.length)));
+  // Escape on a dialog goes back a step rather than leaving nothing on screen.
+  dlg.title.addEventListener('cancel', e => { e.preventDefault(); if (S && !S.over) { closeAll(); setPaused(false); } });
+  dlg.brief.addEventListener('cancel', e => { e.preventDefault(); openTitle(); });
+  dlg.menu.addEventListener('cancel', e => { e.preventDefault(); closeAll(); setPaused(menuWasPaused); });
+  dlg.help.addEventListener('cancel', e => { e.preventDefault(); $('#h-close').click(); });
+  dlg.debrief.addEventListener('cancel', e => { e.preventDefault(); openTitle(); });
+
+  document.addEventListener('visibilitychange', () => { if (document.hidden && S && !S.over && !paused) { setPaused(true); say('Paused while you were away.'); } });
+  if (reduceMotion.addEventListener) reduceMotion.addEventListener('change', kick);
+  new ResizeObserver(resize).observe(stage);
+  new ResizeObserver(resize).observe(pad);
+
+  // the close-in view takes over once the target is near, once a mission
+  setInterval(() => {
+    if (!S || S.over || autoClosed || view !== 'orbit') return;
+    if (C.separation(S.you, S.tgt, S.t) < 80) { autoClosed = true; setView('close'); say('Target near: switched to the close-in view (V switches back).'); }
+  }, 250);
+
+  // ---------- self-test (runs only with #test) ----------
+  function selfTest() {
+    const fails = [];
+    let n = 0;
+    const ok = (cond, name) => { n++; if (!cond) fails.push(name); };
+    const near = (a, b, tol) => Math.abs(a - b) <= tol;
+    const dist = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1]);
+    // a plain fourth-order Runge-Kutta integration of the same two-body problem, to check propagate() against
+    function rk4(o, T, h) {
+      const acc = r => { const d = Math.hypot(r[0], r[1]), k = -C.MU / (d * d * d); return [k * r[0], k * r[1]]; };
+      let r = o.r.slice(), v = o.v.slice();
+      for (let t = 0; t < T - 1e-9; t += h) {
+        const s = Math.min(h, T - t);
+        const k1v = acc(r), k1r = v;
+        const k2v = acc([r[0] + k1r[0] * s / 2, r[1] + k1r[1] * s / 2]), k2r = [v[0] + k1v[0] * s / 2, v[1] + k1v[1] * s / 2];
+        const k3v = acc([r[0] + k2r[0] * s / 2, r[1] + k2r[1] * s / 2]), k3r = [v[0] + k2v[0] * s / 2, v[1] + k2v[1] * s / 2];
+        const k4v = acc([r[0] + k3r[0] * s, r[1] + k3r[1] * s]), k4r = [v[0] + k3v[0] * s, v[1] + k3v[1] * s];
+        r = [r[0] + s / 6 * (k1r[0] + 2 * k2r[0] + 2 * k3r[0] + k4r[0]), r[1] + s / 6 * (k1r[1] + 2 * k2r[1] + 2 * k3r[1] + k4r[1])];
+        v = [v[0] + s / 6 * (k1v[0] + 2 * k2v[0] + 2 * k3v[0] + k4v[0]), v[1] + s / 6 * (k1v[1] + 2 * k2v[1] + 2 * k3v[1] + k4v[1])];
+      }
+      return { r, v };
+    }
+    const mission = (over) => Object.assign({}, C.MISSIONS[0], over, { target: Object.assign({}, C.MISSIONS[0].target, over && over.target) });
+    try {
+      // ---- orbits ----
+      const circ = C.orbitFrom({ alt: 500, at: 30 }), P = C.elements(circ).P;
+      ok(near(P, C.TAU * Math.sqrt((C.RE + 500) ** 3 / C.MU), 1e-6), 'period: Kepler\'s third law');
+      ok(dist(C.propagate(circ, P).r, circ.r) < 1e-6, 'a circular orbit closes after one period');
+      ok(dist(C.propagate(circ, 7 * P + 100).r, C.propagate(circ, 100).r) < 1e-5, 'seven orbits later, the same place');
+      ok(near(C.len(C.propagate(circ, 1234).r), C.RE + 500, 1e-6), 'a circular orbit keeps its radius');
+      const ell = C.orbitFrom({ peri: 300, apo: 2500, w: 40, at: 100 }), elE = C.elements(ell);
+      ok(near(elE.rp, C.RE + 300, 1e-6) && near(elE.ra, C.RE + 2500, 1e-6), 'orbitFrom: the apses it was given');
+      ok(near(elE.w / C.DEG, 40, 1e-6), 'orbitFrom: periapsis where it was put');
+      for (const T of [600, 2900, 5000]) {
+        const a = rk4(ell, T, 0.25), b = C.propagate(ell, T);
+        ok(dist(a.r, b.r) < 2e-3 && dist(a.v, b.v) < 2e-6, 'an ellipse matches numerical integration after ' + T + ' s (' + (dist(a.r, b.r) * 1000).toFixed(2) + ' m)');
+      }
+      const st = C.propagate(ell, 3333), en = v => (v.v[0] ** 2 + v.v[1] ** 2) / 2 - C.MU / C.len(v.r), h = v => v.r[0] * v.v[1] - v.r[1] * v.v[0];
+      const st0 = { r: ell.r, v: ell.v };
+      ok(near(en(st), en(st0), 1e-9) && near(h(st), h(st0), 1e-6), 'energy and angular momentum are conserved');
+      const there = C.propagate(ell, -2000), andBack = C.propagate({ r: there.r, v: there.v, t: -2000 }, 0);
+      ok(dist(andBack.r, ell.r) < 1e-6, 'propagating back and forward again returns to the start');
+      // a Hohmann transfer: the textbook burn reaches the higher orbit half a period later
+      const H = C.hohmann(C.RE + 400, C.RE + 750), low = C.orbitFrom({ alt: 400, at: 0 }), xfer = C.burned(low, 0, H.dv1, 0);
+      ok(near(C.elements(xfer).ra, C.RE + 750, 0.01), 'Hohmann: the first burn raises apoapsis to the target orbit');
+      ok(near(C.nextApsis(xfer, 0, true), H.T, 0.01), 'Hohmann: apoapsis half a transfer orbit later');
+      const top = C.propagate(xfer, H.T), F = C.frame(top);
+      ok(near(C.dot(top.v, F.ah) * 1000 + H.dv2, Math.sqrt(C.MU / (C.RE + 750)) * 1000, 0.01), 'Hohmann: the second burn matches the circular speed');
+      ok(C.nextApsis(circ, 0, true) === null, 'a circular orbit has no apoapsis to skip to');
+      const retro = C.burned(circ, 0, -5, 0);
+      ok(C.elements(retro).P < P && near(C.elements(retro).ra, C.RE + 500, 1e-6), 'a retrograde burn: a shorter period, the far side lowered');
+
+      // ---- light, frames, approaches ----
+      ok(!C.sunlit([-7000, 0]) && C.sunlit([7000, 0]) && C.sunlit([0, 7000]) && C.sunlit([-7000, 6500]), 'Earth\'s shadow is a cylinder behind it');
+      const tEnter = C.nextLight(circ, 0, false), tLeave = C.nextLight(circ, tEnter, true);
+      const pe = C.propagate(circ, tEnter).r;
+      ok(pe[0] < 0 && near(Math.abs(pe[1]), C.RE, 0.5), 'entering the shadow at its edge');
+      const frac = (tLeave - tEnter) / P;
+      ok(frac > 0.35 && frac < 0.4, 'at 500 km, about 37% of an orbit is in shadow (' + (frac * 100).toFixed(1) + '%)');
+      const s0 = C.propagate(circ, 0), F0 = C.frame(s0);
+      const ah = C.toLocal(s0, [s0.r[0] + F0.ah[0], s0.r[1] + F0.ah[1]]), up = C.toLocal(s0, [s0.r[0] * 1.001, s0.r[1] * 1.001]);
+      ok(near(ah[0], 1, 1e-9) && near(ah[1], 0, 1e-9), 'local frame: ahead is +x');
+      ok(near(up[0], 0, 1e-9) && near(up[1], C.len(s0.r) * 0.001, 1e-9), 'local frame: up is +y');
+      ok(C.dot(F0.ah, s0.v) > 0.99 * C.len(s0.v), 'local frame: ahead is the direction of travel');
+      const tgt = C.orbitFrom({ alt: 600, at: 0 }), tc = 1234, meet = C.propagate(tgt, tc);
+      const other = { r: meet.r, v: [meet.v[0] * 0.995 + 0.02, meet.v[1] * 0.995], t: tc };
+      const ca = C.approaches(other, tgt, 0, 6000);
+      ok(ca && ca.d < 1e-3 && near(ca.t, tc, 0.1), 'two orbits that cross at one moment: found, to the meter and the tenth of a second');
+      const behind = C.orbitFrom({ alt: 600, at: -1 });
+      ok(C.approaches(behind, tgt, 0, 20000) === null, 'two satellites in one orbit never get closer');
+      const pass = { r: [meet.r[0] + 3, meet.r[1]], v: [meet.v[0], meet.v[1] + 0.3], t: tc };
+      const caFly = C.approaches(pass, tgt, tc - 30, tc + 30);
+      ok(caFly && caFly.d < 3.01 && caFly.d > 2.5 && near(caFly.t, tc, 2), 'a fast flyby near the start of the window is found');
+
+      // ---- sensors ----
+      const sM = C.start(mission({ target: { opt: 1, ir: 1, radar: 1 } }));
+      const T0 = [7000, 0], at = (dx, dy) => [T0[0] + dx, T0[1] + dy];   // the target over the noon side
+      const r10 = C.sense(sM, at(0, 10), T0), r20 = C.sense(sM, at(0, 20), T0);
+      ok(near(r10.opt / r20.opt, 4, 1e-9) && near(r10.ir / r20.ir, 4, 1e-9), 'optical and infrared fall off as 1/r²');
+      ok(near(r10.radar / r20.radar, 16, 1e-9), 'radar falls off as 1/r⁴');
+      ok(near(C.sense(sM, at(0, C.SEE_SUN), T0).opt, C.DECAY, 1e-12), 'in sunlight, the cameras\' range is where suspicion stops fading');
+      const glare = C.sense(sM, at(10, 0), T0), side = C.sense(sM, at(0, 10), T0);
+      ok(glare.glare && !side.glare && near(glare.opt / side.opt, 1 / 25, 1e-9), 'with the Sun behind you, glare cuts the cameras\' range to a fifth');
+      const below = C.sense(sM, at(-10, 0), T0);
+      ok(below.earth && near(below.opt / side.opt, 0.25, 1e-9), 'against the Earth below, their range is halved');
+      const night = C.sense(sM, [-7010, 0], [-7000, 0]);
+      ok(night.opt === 0 && night.ir > 0 && night.radar > 0, 'in shadow: no reflected light, but heat and radar');
+      const hid = C.sense(sM, [-7100, 300], [7000, 0]);
+      ok(hid.hidden && hid.opt + hid.ir + hid.radar === 0, 'the Earth in between hides you completely');
+      sM.jam = true;
+      const j5 = C.sense(sM, at(0, 5), T0);
+      sM.jam = false;
+      const n5 = C.sense(sM, at(0, 5), T0);
+      ok(near(j5.radar / n5.radar, C.JAM_CUT, 1e-12) && j5.jam > 0, 'jamming blinds the radar, but can be heard');
+      // the range shown in the close-in view agrees with the rates: just inside it suspicion rises, just outside it fades
+      const tgS = C.propagate(sM.tgt, 0), FS = C.frame(tgS);
+      for (const [a, jam] of [[0.3, false], [-Math.PI / 2, false], [2, true]]) {
+        sM.jam = jam;
+        const R = C.seenWithin(sM, tgS, a), u = [FS.ah[0] * Math.cos(a) + FS.rh[0] * Math.sin(a), FS.ah[1] * Math.cos(a) + FS.rh[1] * Math.sin(a)];
+        const rate = d => { const q = C.sense(sM, [tgS.r[0] + u[0] * d, tgS.r[1] + u[1] * d], tgS.r); return q.opt + q.ir + q.radar + q.jam; };
+        ok(rate(R * 0.98) > C.DECAY && rate(R * 1.02) < C.DECAY, 'the range drawn round the target matches its sensors (' + fmtDist(R) + (jam ? ', jamming' : '') + ')');
+      }
+      sM.jam = false;
+      // which sensor the close-in view says would notice you first
+      const day = C.start(mission({ target: { opt: 1, ir: 1, radar: 1 } })), tgL = { r: [C.RE + 500, 0], v: [0, Math.sqrt(C.MU / (C.RE + 500))], t: 0 };
+      ok(C.sunlit(tgL.r) && C.seenBy(day, tgL, 0).by === 'opt', 'in sunlight, against black space, the cameras see you first');
+      const dark = C.start(mission({ target: { opt: 1, ir: 0.1, radar: 1 } })), tgD = { r: [-(C.RE + 500), 0], v: [0, -Math.sqrt(C.MU / (C.RE + 500))], t: 0 };
+      ok(!C.sunlit(tgD.r) && C.seenBy(dark, tgD, 0.3).by === 'radar', 'in shadow, radar is what sees you');
+      dark.jam = true;
+      ok(C.seenBy(dark, tgD, 0.3).by === 'jam' && C.seenBy(dark, tgD, 0.3).d < C.seenWithin({ ...dark, jam: false }, tgD, 0.3), 'jamming: the range shrinks, and what gives you away is the jamming');
+      const pm = C.plume(sM, 10, false, at(0, 10), T0), pg = C.plume(sM, 10, true, at(0, 10), T0);
+      ok(pm >= 25 && pg < pm / 10, 'a main-engine plume is bright, cold gas faint');
+
+      // ---- rules ----
+      const g = C.start(mission());
+      ok(g.main === 30 && g.kv === 2 && g.alert === 0, 'a game starts with full tanks and an unaware target');
+      ok(C.burn(g, 31, 0, false) === null && g.main === 30, 'no burn beyond the propellant left');
+      const before = g.you;
+      ok(C.burn(g, -2, 0, false) && near(g.main, 28, 1e-9) && g.you !== before, 'a burn spends its Δv and changes the orbit');
+      ok(C.fire(g) === null, 'no firing out of range');
+      C.step(g, 600);
+      ok(near(g.t, 600, 1e-6) && g.over === null, 'time passes');
+      // the target in your own orbit, a few km ahead: an interceptor takes range / 150 m/s to get there
+      const ahead = km => { const g = C.start(mission({ target: { decoys: 1 } })), v = C.len(g.you.v); g.tgt = { r: C.propagate(g.you, km / v).r, v: C.propagate(g.you, km / v).v, t: 0 }; return g; };
+      const near2 = ahead(2), sol2 = C.solution(near2);
+      ok(sol2.ok && near(sol2.range, 2, 0.01) && near(sol2.tof, 2000 / C.KV_SPEED, 0.2) && sol2.hit, 'from 2 km: 13 s of flight, before an unaware target can react');
+      C.fire(near2);
+      ok(near2.alert === 2 && near2.kv === 1 && near2.shot, 'a launch alerts the target and spends an interceptor');
+      C.step(near2, 30);
+      ok(near2.over && near2.over.win && near2.over.how === 'kill' && near2.over.unseen, 'the shot arrives in time: target destroyed, unseen');
+      const far4 = ahead(4), sol4 = C.solution(far4);
+      ok(sol4.ok && !sol4.hit, 'from 4 km: 27 s of flight, too slow');
+      C.fire(far4);
+      C.step(far4, 40);
+      ok(!far4.over && far4.decoys === 0 && far4.kv === 1 && far4.alert === 2, 'a slow shot is drawn off by a decoy');
+      const sol4b = C.solution(far4);
+      ok(sol4b.ok && sol4b.hit && sol4b.react === 5, 'with no decoys left, any shot in range hits');
+      // the target 100 m ahead of you and 5 m/s slower: you run into it in 20 s
+      const ramG = C.start(mission()), me0 = C.propagate(ramG.you, 0), F1 = C.frame(me0);
+      ramG.tgt = { r: [me0.r[0] + F1.ah[0] * 0.1, me0.r[1] + F1.ah[1] * 0.1], v: [me0.v[0] - F1.ah[0] * 0.005, me0.v[1] - F1.ah[1] * 0.005], t: 0 };
+      C.step(ramG, 60);
+      ok(ramG.over && ramG.over.how === 'ram' && near(ramG.t, 16, 0.6), 'flying into the target destroys you both');
+      const sink = C.start(mission());
+      sink.you = C.burned(sink.you, 0, -400, 0);
+      C.step(sink, 4000);
+      ok(sink.over && sink.over.how === 'reentry' && sink.t < 3000, 'too low and you burn up');
+      const lateG = C.start(mission({ time: 100 }));
+      C.step(lateG, 500);
+      ok(lateG.over && lateG.over.how === 'time' && near(lateG.t, 100, 1e-6), 'the mission ends when time runs out');
+      const pw = C.start(mission());
+      pw.you = C.orbitFrom({ alt: 520, at: 180 });
+      pw.lit = false;
+      C.setJam(pw, true);
+      C.step(pw, 200);
+      ok(near(pw.batt, 100 - 200 * 0.27, 0.01), 'in shadow, the jammer drains the battery (' + pw.batt.toFixed(1) + '%)');
+      pw.batt = 1;
+      C.step(pw, 10);
+      ok(pw.brownout && !pw.jam && C.burn(pw, 1, 0, false) === null, 'a flat battery: the jammer stops and so do burns');
+
+      // ---- whole missions ----
+      // Fly a list of [time, Δv] burns, then fire as soon as a shot would hit (or as the range starts to open).
+      function fly(m, burns, jamWithin) {
+        const g = C.start(m), todo = burns.slice();
+        let prev = Infinity;
+        for (let guard = 0; !g.over && guard < 1e6; guard++) {
+          if (todo.length && g.t >= todo[0][0] - 1e-9) { C.burn(g, todo.shift()[1], 0, false); continue; }
+          const r = C.separation(g.you, g.tgt, g.t);
+          let h = 0.5;
+          if (r > 60) { h = Math.min(30, (r - 50) / 2); prev = Infinity; }
+          else {
+            if (jamWithin && r < jamWithin && !g.jam) C.setJam(g, true);
+            const sol = C.solution(g);
+            if (sol.ok && (sol.hit || r > prev)) C.fire(g);
+            prev = r;
+          }
+          C.step(g, todo.length ? Math.min(h, todo[0][0] - g.t) : h);
+        }
+        return g;
+      }
+      // the first mission's single burn, found with the same predictions the player sees
+      const m1 = C.start(C.MISSIONS[0]);
+      let best = null;
+      for (let dv = -0.5; dv >= -8; dv -= 0.05) {
+        const c = C.approaches(C.burned(m1.you, 1800, dv, 0), m1.tgt, 1800, m1.m.time - 600);
+        if (c && (!best || c.d < best.d)) best = { dv: Math.round(dv * 100) / 100, d: c.d, t: c.t };
+      }
+      ok(best && best.d < 1, 'mission 1: Planned finds a single retrograde burn that reaches the target (' + (best ? best.dv + ' m/s, ' + fmtDist(best.d) : 'none') + ')');
+      // reference flights, found by an autopilot that re-plans after each of the target's burns
+      const byId = id => C.MISSIONS.find(m => m.id === id);
+      for (const [id, burns, jam] of [
+        ['gap', [[1800, best ? best.dv : -1.76]]],
+        ['climb', [[5040, 98.43]]],
+        ['night', [[120, -48.75]], 12],
+        ['wary', [[2760, -51.26], [5400, 7.65], [14760, -0.16], [20280, 6.29]]],
+        ['deep', [[0, -200.06]]],
+      ]) {
+        const g = fly(byId(id), burns, jam);
+        ok(g.over && g.over.win && g.over.unseen && g.dvMain <= g.m.par, byId(id).name + ': a reference flight destroys the target unseen, within par (' +
+          (g.over ? g.over.how + (g.over.unseen ? ', unseen' : ', seen') : 'no result') + ', ' + g.dvMain.toFixed(1) + ' m/s)');
+      }
+      const lit = fly(byId('climb'), [[2160, 96.51]]);
+      ok(lit.over && lit.over.win && !lit.over.unseen, 'Climb: the cheapest window meets in sunlight, and the target sees it coming');
+      const noJam = fly(byId('night'), [[120, -48.75]]);
+      ok(noJam.over && !noJam.over.unseen, 'Night shift: without the jammer, the same flight is seen');
+      for (const seed of [3, 4, 5]) {
+        const m = C.randomMission(seed), g = C.start(m);
+        const c = C.approaches(C.burned(g.you, m.window.t, m.window.dv, 0), g.tgt, m.window.t, m.time);
+        ok(c && c.d < 2 && Math.abs(m.window.dv) < m.main && c.t < m.time - 3600, 'a random hunt (seed ' + seed + ') has a Hohmann window it can afford');
+      }
+
+      // ---- the burn pad ----
+      let rimOver = 0;
+      for (const [max, step] of [[30, 0.1], [130, 0.1], [6, 0.01], [12, 0.01]]) {
+        for (let k = 0; k < 3600; k++) {
+          const a = k / 3600 * C.TAU, p = padPlan(Math.cos(a) * 1.2, Math.sin(a) * 1.2, max, step), dv = Math.hypot(p.pro, p.out);
+          if (dv > max + 1e-9 || dv < max - 2 * step) rimOver++;
+        }
+      }
+      ok(rimOver === 0, 'the burn pad: all the way round the rim, a burn is just under the full tank, never over (' + rimOver + ' misses)');
+      const half = padPlan(Math.SQRT1_2, 0, 30, 0.1);
+      ok(near(half.pro, 15, 1e-9) && half.out === 0, 'the burn pad: halfway out is a quarter of the propellant');
+
+      // ---- saved ratings ----
+      ok(JSON.stringify(parseProgress({ best: { gap: 3, climb: 1 } })) === JSON.stringify({ best: { gap: 3, climb: 1 } }), 'ratings: a good save is read back');
+      ok(Object.keys(parseProgress({ best: { gap: 4, climb: -1, night: 1.5, nope: 2, constructor: 1 } }).best).length === 0, 'ratings: bad entries are dropped');
+      ok(Object.keys(parseProgress(null).best).length === 0 && Object.keys(parseProgress('x').best).length === 0, 'ratings: a damaged save is ignored');
+    } catch (e) { fails.push('exception during self-test: ' + (e && e.stack || e)); }
+    return { total: n, failures: fails };
+  }
+  // Test contract shared with tools/: set window.portaTestResult before load, then show the result on the page.
+  function runTestsIfRequested() {
+    if (location.hash !== '#test') return;
+    testing = true;
+    const r = window.portaTestResult = selfTest();
+    testing = false;
+    let el = $('#test-report');
+    if (!el) { el = document.createElement('div'); el.id = 'test-report'; el.setAttribute('role', 'status'); el.popover = 'manual'; document.body.appendChild(el); }
+    // A popover is drawn above the modal title screen, so the result can be read.
+    if (el.showPopover && !el.matches(':popover-open')) el.showPopover();
+    el.className = r.failures.length ? 'fail' : 'pass';
+    el.textContent = r.failures.length
+      ? 'Self-test: ' + r.failures.length + ' of ' + r.total + ' checks FAILED\n' + r.failures.map(f => '✗ ' + f).join('\n')
+      : 'Self-test: all ' + r.total + ' checks passed';
+    if (r.failures.length) console.error('[conjunction] self-test: ' + r.failures.length + ' of ' + r.total + ' checks failed');
+  }
+
+  // ---------- boot ----------
+  resize();
+  openTitle();
+  runTestsIfRequested();
+  window.addEventListener('hashchange', runTestsIfRequested);
+})();
+</script>
+</body>
+</html>

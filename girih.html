@@ -93,7 +93,7 @@
   .actions button:active:not(:disabled) { filter: brightness(1.15); }
   #hint { text-align: center; color: var(--ink-dim); font-size: 13px; font-style: italic; }
   @media (pointer: coarse) { #hint { display: none; } }
-  /* top, margin, width and height undo the popover defaults, which centre it */
+  /* top, margin, width and height undo the popover defaults, which center it */
   #test-report { position: fixed; top: auto; left: 12px; right: 12px; bottom: 12px; z-index: 10; margin: 0; width: auto; height: auto; max-height: 40vh; overflow: auto; padding: 10px 14px; border: 1px solid; background: var(--panel); font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; -webkit-user-select: text; user-select: text; }
   #test-report.pass { color: #8fd19e; }
   #test-report.fail { color: #f08a7a; }
@@ -232,7 +232,7 @@ var GIRIH = (function () {
   // two lines leave at 54° to the edge and each stops at its first crossing with
   // another line (two lines meeting head-on count as a crossing). The decagon is
   // the exception: its lines run through the first crossing and stop at the
-  // second, which gives the ten-fold rosette with the star-shaped centre.
+  // second, which gives the ten-fold rosette with the star-shaped center.
   function decorate(pts, skip) {
     const n = pts.length, rays = [];
     for (let i = 0; i < n; i++) {
@@ -663,9 +663,9 @@ var ORNAMENT = (function () {
     }
     return [best.x, best.y];
   }
-  // Motif centre: the centroid, unless the region is concave (typically cut by the panel
+  // Motif center: the centroid, unless the region is concave (typically cut by the panel
   // frame) and the centroid falls outside it or much nearer its edge than need be.
-  function centre(pts) {
+  function center(pts) {
     const c = centroid(pts);
     if (convex(pts)) return c;
     const p = pole(pts, 0.005), inside = pointInPoly(pts, c);
@@ -786,14 +786,14 @@ var ORNAMENT = (function () {
   }
 
   // ---------- main ----------
-  // faces: [{poly}], tiles: placed girih tiles (for locating decagon and pentagon centres)
+  // faces: [{poly}], tiles: placed girih tiles (for locating decagon and pentagon centers)
   function render(c, faces, tiles) {
     const decs = tiles.filter(t => t.tile.id === 'decagon');
     const pents = tiles.filter(t => t.tile.id === 'pentagon');
     for (const f of faces) {
       const pts = distinct(f.poly);
       if (pts.length < 3) continue;
-      const cen = centre(pts), rIn = inradius(pts, cen), far = farthest(pts, cen);
+      const cen = center(pts), rIn = inradius(pts, cen), far = farthest(pts, cen);
       const n = pts.length, lw = Math.max(0.012, Math.min(0.03, rIn * 0.09));
       const dec = decs.find(t => pointInPoly(pts, [t.x, t.y]));
       const pen = pents.find(t => pointInPoly(pts, [t.x, t.y]));
@@ -803,7 +803,7 @@ var ORNAMENT = (function () {
       c.fillStyle = small ? P.dark : P.ground;
       poly(c, pts); c.fill();
       if (dec) {
-        // rosette centred on the decagon itself so frame-cut rosettes stay aligned
+        // rosette centered on the decagon itself so frame-cut rosettes stay aligned
         const tv = dec.tile.rots[dec.r].verts.map(p => [p[0] + dec.x, p[1] + dec.y]);
         const a = farthest(pts.length >= 14 ? pts : tv, [dec.x, dec.y]).ang;
         c.translate(dec.x, dec.y); rosette(c, 0.95, a, 0.02);
@@ -827,7 +827,7 @@ var ORNAMENT = (function () {
       c.restore();
     }
   }
-  return { render, palette: P, centre };
+  return { render, palette: P, center };
 })();
 </script>
 <script>
@@ -848,7 +848,7 @@ var ORNAMENT = (function () {
   // so they are allocated then and freed on the next panel (mobile canvas memory is tight)
   const plain = document.createElement('canvas'), pctx = plain.getContext('2d');
   const ornate = document.createElement('canvas'), octx = ornate.getContext('2d');
-  // cross-fades: scaffolding -> plain ground, and (only for a flawless panel) -> coloured infill
+  // cross-fades: scaffolding -> plain ground, and (only for a flawless panel) -> colored infill
   const plainF = { from: 0, to: 0, t0: 0, dur: FADE_MS }, ornF = { from: 0, to: 0, t0: 0, dur: FADE_MS };
   let ornateReady = false, ornateAt = null, ornateTimer = 0, faceCache = null;
   const SAVE_KEY = 'girih-save-2'; // bumped when tile geometry changes, so old boards cannot be rebuilt into overlaps
@@ -1517,10 +1517,10 @@ var ORNAMENT = (function () {
         'wrong panel size': { ...good, W: 9 }, 'too many set-asides': { ...good, skips: SKIPS + 1 }, 'negative score': { ...good, score: -1 },
       };
       for (const name in bad) ok(parseSave(bad[name]) === null, 'save: refuses ' + name);
-      // ornament centre: the centroid for a convex region, an interior point otherwise
-      const L = [[0, 0], [4, 0], [4, 0.5], [0.5, 0.5], [0.5, 4], [0, 4]], cL = ORNAMENT.centre(L);
-      ok(G.pointInPoly(L, cL) && Math.min(cL[0], cL[1], 0.5 - Math.min(cL[0], cL[1])) > 0.2, 'ornament: an L-shaped region gets a centre well inside it');
-      const sq = ORNAMENT.centre([[0, 0], [2, 0], [2, 1], [0, 1]]);
+      // ornament center: the centroid for a convex region, an interior point otherwise
+      const L = [[0, 0], [4, 0], [4, 0.5], [0.5, 0.5], [0.5, 4], [0, 4]], cL = ORNAMENT.center(L);
+      ok(G.pointInPoly(L, cL) && Math.min(cL[0], cL[1], 0.5 - Math.min(cL[0], cL[1])) > 0.2, 'ornament: an L-shaped region gets a center well inside it');
+      const sq = ORNAMENT.center([[0, 0], [2, 0], [2, 1], [0, 1]]);
       ok(near(sq[0], 1) && near(sq[1], 0.5), 'ornament: a convex region keeps its centroid');
     } catch (e) { fails.push('exception during self-test: ' + (e && e.message)); }
     return { total: n, failures: fails };
