@@ -5,9 +5,9 @@
   A tile-laying puzzle built on the five girih tiles of Persian strapwork.
   Fill each panel outward from the central star. Pick one of the three
   tiles in your tray, tap a lit edge to try it there, tap the same edge
-  again to turn it, then press Set. The tray's empty place is then filled
-  from the front of the queue shown beside it. The panel is judged when
-  nothing more will fit, and a flawless panel is painted with flowers.
+  again to turn it, then press Set. A new tile takes its place in the
+  tray. The panel is judged when nothing more will fit, and a flawless
+  panel is painted with flowers.
 
   Keyboard: 1, 2 and 3 pick a tile from the tray, left and right arrows
   choose an edge, up and down arrows or r turn the tile, enter or space
@@ -70,16 +70,14 @@
   aside { width: 192px; flex: none; display: flex; flex-direction: column; gap: 14px; }
   .hand { display: flex; flex-direction: column; gap: 4px; }
   .hand .lbl { font-size: 14px; font-style: italic; color: var(--ink-dim); }
-  .hand canvas { display: block; }
   .tray { display: flex; gap: 6px; }
+  .tray canvas { display: block; margin: 0 auto; }
   .tray button {
-    padding: 0; border: 2px solid var(--edge); border-radius: 3px;
+    flex: 1 1 0; padding: 0; border: 2px solid var(--edge); border-radius: 3px;
     background: var(--panel); cursor: pointer; touch-action: manipulation;
   }
   .tray button[aria-pressed="true"] { border-color: var(--gold); background: #222a50; }
   .tray button:disabled { cursor: default; }
-  .nexts { display: flex; gap: 6px; }
-  .nexts canvas { background: var(--panel); border: 1px solid var(--edge); }
   /* Turn and Set share a row; the other buttons take a row each */
   .actions { display: flex; flex-wrap: wrap; gap: 8px; }
   .actions button {
@@ -103,11 +101,10 @@
     header h1 { font-size: 22px; }
     #hud { gap: 12px; font-size: 14px; }
     #stage { flex-direction: column; gap: 6px; }
-    /* the buttons move under the tray when the row is too narrow for both */
+    /* the buttons move under the tray when the row is too narrow for both, and each fills it */
     aside { width: auto; flex-direction: row; flex-wrap: wrap; align-items: flex-end; gap: 6px 12px; }
-    .hand { flex-direction: row; align-items: flex-end; gap: 10px; }
+    .hand { flex: 1 1 240px; }
     .hand .lbl { display: none; }
-    .nexts { gap: 4px; }
     .actions { flex: 1 1 240px; gap: 6px; }
     .actions button { flex: 1 1 0; padding: 0 10px; font-size: 15px; min-height: 44px; }
   }
@@ -157,8 +154,6 @@
           <button type="button" disabled><canvas></canvas></button>
           <button type="button" disabled><canvas></canvas></button>
         </div>
-        <span class="lbl" id="queue-lbl">Then</span>
-        <div class="nexts" role="group" aria-labelledby="queue-lbl"><canvas role="img"></canvas><canvas role="img"></canvas></div>
       </div>
       <div class="actions">
         <button id="btn-turn" class="pair" disabled>Turn</button>
@@ -176,7 +171,7 @@
       <h2 id="title-heading">Girih</h2>
       <p>The five tiles of Persian strapwork. Lines leave every edge at 54°, so wherever two tiles meet edge to edge the pattern runs on unbroken.</p>
       <div id="legend"></div>
-      <p>The tiles are scaffolding: when a panel is judged they dissolve and only the strapwork remains. A flawless panel is painted with flowers. Fill the panel outward from the central star. Pick one of the three tiles in your tray, tap a lit edge to try it there, tap the same edge again to turn it, then press Set. The tray refills from the queue. The panel is judged when nothing more will fit.</p>
+      <p>The tiles are scaffolding: when a panel is judged they dissolve and only the strapwork remains. A flawless panel is painted with flowers. Fill the panel outward from the central star. Pick one of the three tiles in your tray, tap a lit edge to try it there, tap the same edge again to turn it, then press Set. A new tile takes its place in the tray. The panel is judged when nothing more will fit.</p>
       <p id="new-warn" class="verdict" role="status" hidden>A new game replaces your saved game. Press it again to confirm.</p>
       <button id="btn-continue" hidden>Continue</button>
       <button id="btn-start">Begin</button>
@@ -839,7 +834,7 @@ var ORNAMENT = (function () {
   const IVORY = '#efe3c4', STRAP_DARK = '#0b0913', GOLD = '#d6a748', PLAIN = '#223272';
   const PANELS = [[8, 11], [9, 12], [10, 13], [11, 14]];
   const SKIPS = 3, FADE_MS = 1400;
-  const TRAY = 3, NEXT = 2; // tiles in the tray to choose from, and tiles shown queued behind it
+  const TRAY = 3; // tiles in the tray to choose from
 
   const $ = s => document.querySelector(s);
   const canvas = $('#board'), ctx = canvas.getContext('2d');
@@ -853,13 +848,13 @@ var ORNAMENT = (function () {
   let ornateReady = false, ornateAt = null, ornateTimer = 0, faceCache = null;
   const SAVE_KEY = 'girih-save-2'; // bumped when tile geometry changes, so old boards cannot be rebuilt into overlaps
   const overlay = $('#overlay');
-  const trayButtons = [...document.querySelectorAll('.tray button')], queueIcons = [...document.querySelectorAll('.nexts canvas')];
+  const trayButtons = [...document.querySelectorAll('.tray button')];
   const dpr = () => window.devicePixelRatio || 1;
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
   const calm = () => reduceMotion.matches;
 
   // tray: the TRAY tile ids to choose from (null for a place just emptied, none once the panel is judged); active: the place in use
-  let board, W = 8, H = 11, panelIdx = 0, score = 0, skips = SKIPS, tray = [], queue = [], active = 0;
+  let board, W = 8, H = 11, panelIdx = 0, score = 0, skips = SKIPS, tray = [], active = 0;
   // byType: tile id -> where it fits (Board.candidateSets); cands: the same for the active tile
   let byType = new Map(), cands = new Map(), candList = [], sel = null, phase = 'title';
   let sc = 30, ox = 0, oy = 0, cssW = 40, cssH = 40, D = 1; // D: the pixel ratio the canvases were last sized for
@@ -1062,7 +1057,7 @@ var ORNAMENT = (function () {
     [W, H] = PANELS[Math.min(panelIdx, PANELS.length - 1)];
     board = new Board(W, H);
     board.add(place(TILES.decagon, 0, W / 2, H / 2));
-    skips = SKIPS; tray = []; queue = []; active = 0;
+    skips = SKIPS; tray = []; active = 0;
     resetFades(); freeFinish();
     relayout();
     setMsg('');
@@ -1084,23 +1079,24 @@ var ORNAMENT = (function () {
     // only tiles that fit somewhere right now are dealt; tiles the board has outgrown leave at no cost
     const bag = [];
     for (const id of byType.keys()) for (let k = 0; k < TILES[id].weight; k++) bag.push(id);
-    const d = deal(tray, queue, byType, () => bag[Math.floor(Math.random() * bag.length)]);
-    tray = d.tray; queue = d.queue;
+    const d = deal(tray, byType, () => bag[Math.floor(Math.random() * bag.length)]);
+    tray = d.tray;
     const msg = lead ? [lead] : [];
     if (d.gone.length) msg.push('No longer fits and set aside: ' + d.gone.map(id => TILES[id].name.toLowerCase()).join(', ') + '.');
     if (msg.length) setMsg(msg.join(' '));
     choose(active);
   }
-  // Fills the tray's empty places, and any holding a tile that no longer fits anywhere, from the
-  // front of the queue, then tops the queue up with pick(). `fits` has the tile types that fit
-  // somewhere. Returns new arrays, and the tiles that left because they no longer fit.
-  function deal(tray, queue, fits, pick) {
-    const gone = [...tray, ...queue].filter(id => id && !fits.has(id));
-    const q = queue.filter(id => fits.has(id)), take = () => q.length ? q.shift() : pick();
-    const t = [];
-    for (let i = 0; i < TRAY; i++) t.push(tray[i] && fits.has(tray[i]) ? tray[i] : take());
-    while (q.length < NEXT) q.push(pick());
-    return { tray: t, queue: q, gone };
+  // Fills the tray's empty places, and any holding a tile that no longer fits anywhere, with pick().
+  // `fits` has the tile types that fit somewhere. Returns a new tray, and the tiles that left
+  // because they no longer fit.
+  function deal(tray, fits, pick) {
+    const t = [], gone = [];
+    for (let i = 0; i < TRAY; i++) {
+      if (tray[i] && fits.has(tray[i])) { t.push(tray[i]); continue; }
+      if (tray[i]) gone.push(tray[i]);
+      t.push(pick());
+    }
+    return { tray: t, gone };
   }
   // Lights the edges where the tile in tray place i fits. A chosen edge stays chosen if that tile fits there too.
   function choose(i) {
@@ -1166,7 +1162,7 @@ var ORNAMENT = (function () {
     setMsg((lead ? lead + ' ' : '') + pct + '% filled. ' + verdict + (symNames.length ? ' Symmetry: ' + symNames.join(', ') + ' (bonus ×' + mult + ').' : '') +
       ' ' + board.tiles.length + ' tiles, ' + board.rosettes + (board.rosettes === 1 ? ' rosette' : ' rosettes') +
       ', ' + [...board.vertMap.values()].filter(v => v.closed).length + ' closed joints. Panel bonus +' + bonus + '.');
-    sel = null; candList = []; cands = new Map(); byType = new Map(); tray = []; queue = [];
+    sel = null; candList = []; cands = new Map(); byType = new Map(); tray = [];
     const now = performance.now();
     allocFinish();
     setFade(plainF, 1, now, 500);
@@ -1192,13 +1188,13 @@ var ORNAMENT = (function () {
     if (!board) return;
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify({
-        panelIdx, score, skips, tray, queue, active, phase, W, H, msg: $('#msg').textContent,
+        panelIdx, score, skips, tray, active, phase, W, H, msg: $('#msg').textContent,
         tiles: board.tiles.map(t => ({ id: t.tile.id, r: t.r, x: t.x, y: t.y })),
       }));
     } catch (e) { /* storage unavailable; play on without saving */ }
   }
   function clearSave() { try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* nothing to clear */ } }
-  // Returns { s, board, tray, queue, active } for a usable save; an unreadable one is deleted.
+  // Returns { s, board, tray, active } for a usable save; an unreadable one is deleted.
   function loadSave() {
     let raw = null;
     try { raw = localStorage.getItem(SAVE_KEY); } catch (e) { return null; }
@@ -1215,10 +1211,8 @@ var ORNAMENT = (function () {
     const [w, h] = PANELS[Math.min(s.panelIdx, PANELS.length - 1)];
     if (s.W !== w || s.H !== h) return null;
     // saves from before the tray kept the three tiles dealt in `queue`; they become the tray
-    const older = s.tray === undefined, tray = older ? s.queue : s.tray, queue = older ? [] : s.queue;
-    const active = s.active === undefined ? 0 : s.active;
+    const tray = s.tray === undefined ? s.queue : s.tray, active = s.active === undefined ? 0 : s.active;
     if (!Array.isArray(tray) || tray.length > TRAY || !tray.every(isTile)) return null;
-    if (!Array.isArray(queue) || queue.length > NEXT || !queue.every(isTile)) return null;
     if (!isInt(active, 0, TRAY - 1)) return null;
     if (s.msg !== undefined && typeof s.msg !== 'string') return null;
     if (!Array.isArray(s.tiles) || !s.tiles.length) return null;
@@ -1229,12 +1223,12 @@ var ORNAMENT = (function () {
       if (!b.fits(pl)) return null; // an edited or stale save must not rebuild into overlaps
       b.add(pl);
     }
-    return { s, board: b, tray, queue, active };
+    return { s, board: b, tray, active };
   }
   function restore(v) {
     const s = v.s;
     panelIdx = s.panelIdx; score = s.score; skips = s.skips; W = s.W; H = s.H;
-    tray = v.tray.slice(); queue = v.queue.slice(); active = v.active;
+    tray = v.tray.slice(); active = v.active;
     board = v.board;
     resetFades(); freeFinish();
     $('#panel').textContent = panelIdx + 1;
@@ -1260,7 +1254,6 @@ var ORNAMENT = (function () {
       b.setAttribute('aria-pressed', String(phase === 'play' && i === active));
       b.setAttribute('aria-label', name(tray[i]));
     });
-    queueIcons.forEach((cv, i) => { drawIcon(cv, queue[i], 10, 36); cv.setAttribute('aria-label', name(queue[i])); });
   }
   function updateHud() {
     $('#score').textContent = score;
@@ -1446,20 +1439,20 @@ var ORNAMENT = (function () {
           ok(G.placementsAgainst(t, edge).map(keyOf).sort().join() === allAgainst(t, edge).map(keyOf).sort().join(), id + ': placements against an edge of direction ' + dir);
         }
       }
-      // the tray: a used place is refilled from the front of the queue and the queue is topped up;
-      // tiles that no longer fit anywhere leave the tray and the queue and are reported
+      // the tray: a used place is refilled and the others stay put; tiles that no longer fit
+      // anywhere are replaced and reported
       const all = new Set(TILE_IDS), picks = list => () => list.shift();
-      let d = deal([], [], all, picks(['hexagon', 'bowtie', 'decagon', 'pentagon', 'rhombus']));
-      ok(d.tray.join() === 'hexagon,bowtie,decagon' && d.queue.join() === 'pentagon,rhombus' && !d.gone.length, 'tray: a new panel deals the tray, then the queue');
-      d = deal(['decagon', null, 'bowtie'], ['hexagon', 'rhombus'], all, picks(['pentagon']));
-      ok(d.tray.join() === 'decagon,hexagon,bowtie' && d.queue.join() === 'rhombus,pentagon' && !d.gone.length, 'tray: a used place is refilled from the front of the queue');
-      d = deal(['decagon', 'rhombus', 'bowtie'], ['rhombus', 'hexagon'], new Set(['decagon', 'bowtie', 'hexagon']), picks(['bowtie', 'decagon']));
-      ok(d.tray.join() === 'decagon,hexagon,bowtie' && d.queue.join() === 'bowtie,decagon' && d.gone.join() === 'rhombus,rhombus', 'tray: tiles that no longer fit are replaced');
+      let d = deal([], all, picks(['hexagon', 'bowtie', 'decagon']));
+      ok(d.tray.join() === 'hexagon,bowtie,decagon' && !d.gone.length, 'tray: a new panel deals a full tray');
+      d = deal(['decagon', null, 'bowtie'], all, picks(['pentagon']));
+      ok(d.tray.join() === 'decagon,pentagon,bowtie' && !d.gone.length, 'tray: a used place is refilled in place');
+      d = deal(['rhombus', 'decagon', 'rhombus'], new Set(['decagon', 'bowtie']), picks(['bowtie', 'decagon']));
+      ok(d.tray.join() === 'bowtie,decagon,decagon' && d.gone.join() === 'rhombus,rhombus', 'tray: tiles that no longer fit are replaced');
       // seeded games: the cached, incremental candidate search against the direct one
       let saveBoard = null;
       for (const [seed, pi] of [[1, 0], [2, 1], [3, 3]]) {
         const [w, h] = PANELS[pi], R = rng(seed), b = new Board(w, h), game = 'game ' + seed + ' step ';
-        let hand = { tray: [], queue: [] }, dealt = true;
+        let hand = { tray: [] }, dealt = true;
         b.add(place(TILES.decagon, 0, w / 2, h / 2));
         for (let step = 0; ; step++) {
           const sets = b.candidateSets();
@@ -1474,14 +1467,14 @@ var ORNAMENT = (function () {
           if (!sets.size) break;
           // play as the game does: deal, then lay a random tile from the tray somewhere it fits
           const ids = [...sets.keys()];
-          hand = deal(hand.tray, hand.queue, sets, () => ids[Math.floor(R() * ids.length)]);
-          dealt = dealt && hand.tray.length === TRAY && hand.queue.length === NEXT && [...hand.tray, ...hand.queue].every(id => sets.has(id));
+          hand = deal(hand.tray, sets, () => ids[Math.floor(R() * ids.length)]);
+          dealt = dealt && hand.tray.length === TRAY && hand.tray.every(id => sets.has(id));
           const slot = Math.floor(R() * TRAY), cs = [...sets.get(hand.tray[slot]).values()];
           const c = cs[Math.floor(R() * cs.length)], p = c.placements[Math.floor(R() * c.placements.length)];
           b.add(place(p.tile, p.r, p.x, p.y));
           hand.tray[slot] = null;
         }
-        ok(dealt, game + 'end: every deal filled the tray and the queue with tiles that fit');
+        ok(dealt, game + 'end: every deal filled the tray with tiles that fit');
         let area = 0;
         for (const t of b.tiles) area += G.areaInRect(t, w, h);
         ok(b.coverage() === area / (w * h), game + 'end: running coverage equals the direct sum');
@@ -1497,19 +1490,19 @@ var ORNAMENT = (function () {
       const frame = faces([], 3, 4);
       ok(frame.length === 1 && near(Math.abs(G.polyArea(frame[0].poly)), 12), 'an empty panel is one region');
       // saves: a real one is accepted, damaged ones are refused
-      const good = { panelIdx: 0, score: 120, skips: 2, tray: ['hexagon', 'bowtie', 'decagon'], queue: ['rhombus', 'hexagon'], active: 1, phase: 'play', W: 8, H: 11, msg: '+10.', tiles: saveBoard };
+      const good = { panelIdx: 0, score: 120, skips: 2, tray: ['hexagon', 'bowtie', 'decagon'], active: 1, phase: 'play', W: 8, H: 11, msg: '+10.', tiles: saveBoard };
       const v = parseSave(JSON.parse(JSON.stringify(good)));
       ok(v && v.board.tiles.length === saveBoard.length, 'save: a valid save is accepted and rebuilt');
-      ok(v && v.tray.join() === good.tray.join() && v.queue.join() === good.queue.join() && v.active === 1, 'save: the tray, queue and tray place in use come back');
+      ok(v && v.tray.join() === good.tray.join() && v.active === 1, 'save: the tray and the tray place in use come back');
       const older = { ...good, queue: ['hexagon', 'bowtie', 'decagon'] };
       delete older.tray; delete older.active;
       const o = parseSave(older);
-      ok(o && o.tray.join() === 'hexagon,bowtie,decagon' && !o.queue.length && o.active === 0, 'save: a save from before the tray keeps its dealt tiles, as the tray');
+      ok(o && o.tray.join() === 'hexagon,bowtie,decagon' && o.active === 0, 'save: a save from before the tray keeps its dealt tiles, as the tray');
       const bad = {
-        'not an object': null, 'title phase': { ...good, phase: 'title' }, 'no queue': { ...good, queue: undefined },
-        'unknown tile in queue': { ...good, queue: ['star'] }, 'unknown tile in tray': { ...good, tray: ['star'] },
+        'not an object': null, 'title phase': { ...good, phase: 'title' }, 'no tray': { ...good, tray: null },
+        'unknown tile in tray': { ...good, tray: ['star'] },
         'empty place in tray': { ...good, tray: [null, 'hexagon', 'bowtie'] },
-        'tray too full': { ...good, tray: [...good.tray, 'rhombus'] }, 'queue too long': { ...good, queue: [...good.queue, 'rhombus'] },
+        'tray too full': { ...good, tray: [...good.tray, 'rhombus'] },
         'tray place out of range': { ...good, active: TRAY }, 'unknown tile': { ...good, tiles: [...good.tiles, { id: 'star', r: 0, x: 1, y: 1 }] },
         'inherited name as tile': { ...good, tiles: [{ id: 'constructor', r: 0, x: 4, y: 5.5 }] },
         'rotation out of range': { ...good, tiles: [{ ...good.tiles[0], r: 10 }] }, 'coordinate not a number': { ...good, tiles: [{ ...good.tiles[0], x: null }] },
