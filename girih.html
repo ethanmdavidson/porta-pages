@@ -3,7 +3,9 @@
   Girih
 
   A tile-laying puzzle built on the five girih tiles of Persian strapwork.
-  Fill each panel outward from the central star. Pick one of the three
+  Fill each panel outward from its star. From the third panel on there
+  are two, and the seam where their patterns meet takes care to close.
+  Pick one of the three
   tiles in your tray, tap a lit edge to try it there, tap the same edge
   again to turn it, then press Set. A new tile takes its place in the
   tray. The panel is judged when nothing more will fit. The fuller it is,
@@ -172,7 +174,7 @@
       <h2 id="title-heading">Girih</h2>
       <p>The five tiles of Persian strapwork. Lines leave every edge at 54°, so wherever two tiles meet edge to edge the pattern runs on unbroken.</p>
       <div id="legend"></div>
-      <p>The tiles are scaffolding: when a panel is judged they dissolve and only the strapwork remains. A flawless panel is painted with flowers. Fill the panel outward from the central star. Pick one of the three tiles in your tray, tap a lit edge to try it there, tap the same edge again to turn it, then press Set. A new tile takes its place in the tray. The panel is judged when nothing more will fit. The last few gaps cost the most: a flawless panel earns twice what a 99% one does.</p>
+      <p>The tiles are scaffolding: when a panel is judged they dissolve and only the strapwork remains. A flawless panel is painted with flowers. Fill the panel outward from its star. From the third panel on there are two, and the seam where their patterns meet takes care to close. Pick one of the three tiles in your tray, tap a lit edge to try it there, tap the same edge again to turn it, then press Set. A new tile takes its place in the tray. The panel is judged when nothing more will fit. The last few gaps cost the most: a flawless panel earns twice what a 99% one does.</p>
       <p id="new-warn" class="verdict" role="status" hidden>A new game replaces your saved game. Press it again to confirm.</p>
       <button id="btn-continue" hidden>Continue</button>
       <button id="btn-start">Begin</button>
@@ -829,7 +831,7 @@ var ORNAMENT = (function () {
 <script>
 (() => {
   'use strict';
-  const { TILES, TILE_IDS, place, Board, faces } = GIRIH;
+  const { DEG, TILES, TILE_IDS, place, Board, faces } = GIRIH;
 
   const COLORS = { decagon: '#22306b', hexagon: '#2a8f86', bowtie: '#3b63b5', pentagon: '#b4522c', rhombus: '#c99a3a' };
   const IVORY = '#efe3c4', STRAP_DARK = '#0b0913', GOLD = '#d6a748', PLAIN = '#223272';
@@ -1054,14 +1056,28 @@ var ORNAMENT = (function () {
   }
 
   // ---------- game flow ----------
+  // From the third panel on, a panel starts with two stars, one above the other, so the seam where
+  // their patterns meet is the puzzle. Two stars are on one shared grid only when the distance
+  // between them is a sum of the vertical steps the tiles' edges make, 2 sin 72° and 2 sin 36°.
+  // A search of every such distance up to 7.3 found the seam closable with no gap only when
+  // both steps are used at least once, and easy to close (no harder than one star, for a test
+  // bot) except at 2 sin 72° + j × 2 sin 36° for j = 3, 4 and 5 (also checked separately).
+  // Those three can be closed only by a long, exact chain of tiles: a flawless panel stays
+  // possible, but the bot's average fill falls from about 98% to about 94.5%.
+  const TWO_STARS_FROM = 2, SEAMS = [3, 4, 5].map(j => 2 * Math.sin(72 * DEG) + j * 2 * Math.sin(36 * DEG));
+  function starsFor(panel, w, h, random) {
+    if (panel < TWO_STARS_FROM) return [[w / 2, h / 2]];
+    const d = SEAMS[Math.floor(random() * SEAMS.length)];
+    return [[w / 2, h / 2 - d / 2], [w / 2, h / 2 + d / 2]];
+  }
   function newPanel() {
     [W, H] = PANELS[Math.min(panelIdx, PANELS.length - 1)];
     board = new Board(W, H);
-    board.add(place(TILES.decagon, 0, W / 2, H / 2));
+    for (const [x, y] of starsFor(panelIdx, W, H, Math.random)) board.add(place(TILES.decagon, 0, x, y));
     skips = SKIPS; tray = []; active = 0;
     resetFades(); freeFinish();
     relayout();
-    setMsg('');
+    setMsg(board.tiles.length > 1 ? 'Two stars. Where their patterns meet, the seam closes only with care.' : '');
     refresh();
     $('#panel').textContent = panelIdx + 1;
   }
@@ -1458,7 +1474,7 @@ var ORNAMENT = (function () {
       for (const [seed, pi] of [[1, 0], [2, 1], [3, 3]]) {
         const [w, h] = PANELS[pi], R = rng(seed), b = new Board(w, h), game = 'game ' + seed + ' step ';
         let hand = { tray: [] }, dealt = true;
-        b.add(place(TILES.decagon, 0, w / 2, h / 2));
+        for (const [x, y] of starsFor(pi, w, h, R)) b.add(place(TILES.decagon, 0, x, y));
         for (let step = 0; ; step++) {
           const sets = b.candidateSets();
           if (step % 8 === 0 || !sets.size) ok(fromBoard(b) === direct(b), game + step + ': candidates match the direct search');
@@ -1515,6 +1531,28 @@ var ORNAMENT = (function () {
         'wrong panel size': { ...good, W: 9 }, 'too many set-asides': { ...good, skips: SKIPS + 1 }, 'negative score': { ...good, score: -1 },
       };
       for (const name in bad) ok(parseSave(bad[name]) === null, 'save: refuses ' + name);
+      // stars: every panel's stars lie inside it without overlapping, and at the start every edge of
+      // a star can take some tile (two stars set too close leave a gap between them nothing fills)
+      const deadEdges = b => b.freeEdges().filter(({ e }) => !TILE_IDS.some(id => G.placementsAgainst(TILES[id], e).some(pl => b.fits(pl)))).length;
+      const starBoard = (w, h, stars) => {
+        const b = new Board(w, h);
+        let inside = true;
+        for (const [x, y] of stars) {
+          const pl = place(TILES.decagon, 0, x, y);
+          inside = inside && b.fits(pl) && pl.verts.every(v => v[0] > 0 && v[0] < w && v[1] > 0 && v[1] < h);
+          b.add(pl);
+        }
+        return { b, inside };
+      };
+      for (let pi = 0; pi < PANELS.length; pi++) {
+        const [w, h] = PANELS[pi], two = pi >= TWO_STARS_FROM;
+        for (let k = 0; k < (two ? SEAMS.length : 1); k++) {
+          const stars = starsFor(pi, w, h, () => (k + 0.5) / SEAMS.length), { b, inside } = starBoard(w, h, stars);
+          ok(stars.length === (two ? 2 : 1) && inside && !deadEdges(b), 'stars: panel ' + (pi + 1) + (two ? ', ' + SEAMS[k].toFixed(3) + ' apart' : '') + ' starts sound');
+        }
+      }
+      const close = 3 * 2 * Math.sin(36 * DEG), { b: tooClose } = starBoard(10, 13, [[5, 6.5 - close / 2], [5, 6.5 + close / 2]]);
+      ok(deadEdges(tooClose) === 2, 'stars: two stars ' + close.toFixed(3) + ' apart leave the edges facing each other dead');
       // scoring: the fill bonus
       const steps = [];
       for (let pc = 90; pc < 100; pc++) steps.push(fillBonus(pc + 1, 0) - fillBonus(pc, 0));
