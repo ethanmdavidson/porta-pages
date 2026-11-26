@@ -6,8 +6,9 @@
   Fill each panel outward from the central star. Pick one of the three
   tiles in your tray, tap a lit edge to try it there, tap the same edge
   again to turn it, then press Set. A new tile takes its place in the
-  tray. The panel is judged when nothing more will fit, and a flawless
-  panel is painted with flowers.
+  tray. The panel is judged when nothing more will fit. The fuller it is,
+  the bigger its bonus, and the last few gaps cost the most: a flawless
+  panel earns twice what a 99% one does, and is painted with flowers.
 
   Keyboard: 1, 2 and 3 pick a tile from the tray, left and right arrows
   choose an edge, up and down arrows or r turn the tile, enter or space
@@ -171,7 +172,7 @@
       <h2 id="title-heading">Girih</h2>
       <p>The five tiles of Persian strapwork. Lines leave every edge at 54°, so wherever two tiles meet edge to edge the pattern runs on unbroken.</p>
       <div id="legend"></div>
-      <p>The tiles are scaffolding: when a panel is judged they dissolve and only the strapwork remains. A flawless panel is painted with flowers. Fill the panel outward from the central star. Pick one of the three tiles in your tray, tap a lit edge to try it there, tap the same edge again to turn it, then press Set. A new tile takes its place in the tray. The panel is judged when nothing more will fit.</p>
+      <p>The tiles are scaffolding: when a panel is judged they dissolve and only the strapwork remains. A flawless panel is painted with flowers. Fill the panel outward from the central star. Pick one of the three tiles in your tray, tap a lit edge to try it there, tap the same edge again to turn it, then press Set. A new tile takes its place in the tray. The panel is judged when nothing more will fit. The last few gaps cost the most: a flawless panel earns twice what a 99% one does.</p>
       <p id="new-warn" class="verdict" role="status" hidden>A new game replaces your saved game. Press it again to confirm.</p>
       <button id="btn-continue" hidden>Continue</button>
       <button id="btn-start">Begin</button>
@@ -1145,15 +1146,19 @@ var ORNAMENT = (function () {
     refresh(lead);
     save();
   }
+  // The bonus for filling a panel climbs steeply: each percentage point nearer full is worth more
+  // than the one before, a flawless panel earns twice what a 99% one does, and later panels pay more.
+  const fillBonus = (pct, panel) => Math.round(1500 * (panel + 1) / (101 - pct));
   function finishPanel(lead) {
     phase = 'done';
-    const cov = board.coverage(), pct = Math.floor(cov * 100 + 1e-9), perfect = cov >= 1 - 1e-6;
+    // pct follows `perfect`, so a flawless panel is never paid as 99%
+    const cov = board.coverage(), perfect = cov >= 1 - 1e-6, pct = perfect ? 100 : Math.floor(cov * 100 + 1e-9);
     const sym = board.symmetries(), symNames = [];
     if (sym.vertical) symNames.push('left–right mirror');
     if (sym.horizontal) symNames.push('top–bottom mirror');
     if (sym.rotation) symNames.push('half-turn');
     const mult = 1 + 0.5 * symNames.length;
-    const bonus = Math.round((pct * 5 * (panelIdx + 1) + skips * 30) * mult);
+    const bonus = Math.round((fillBonus(pct, panelIdx) + skips * 30) * mult);
     score += bonus;
     const verdict =
       perfect ? 'Not a gap in it. The master finds nothing to correct and sends for the flower painters.' :
@@ -1510,6 +1515,12 @@ var ORNAMENT = (function () {
         'wrong panel size': { ...good, W: 9 }, 'too many set-asides': { ...good, skips: SKIPS + 1 }, 'negative score': { ...good, score: -1 },
       };
       for (const name in bad) ok(parseSave(bad[name]) === null, 'save: refuses ' + name);
+      // scoring: the fill bonus
+      const steps = [];
+      for (let pc = 90; pc < 100; pc++) steps.push(fillBonus(pc + 1, 0) - fillBonus(pc, 0));
+      ok(steps.every((g, i) => i === 0 || g > steps[i - 1]), 'scoring: each point nearer a full panel is worth more than the last (' + steps.join(', ') + ')');
+      ok(fillBonus(100, 0) === 2 * fillBonus(99, 0), 'scoring: a flawless panel earns twice what a 99% one does');
+      ok(fillBonus(100, 3) === 4 * fillBonus(100, 0), 'scoring: the fourth panel pays four times the first');
       // ornament center: the centroid for a convex region, an interior point otherwise
       const L = [[0, 0], [4, 0], [4, 0.5], [0.5, 0.5], [0.5, 4], [0, 4]], cL = ORNAMENT.center(L);
       ok(G.pointInPoly(L, cL) && Math.min(cL[0], cL[1], 0.5 - Math.min(cL[0], cL[1])) > 0.2, 'ornament: an L-shaped region gets a center well inside it');
