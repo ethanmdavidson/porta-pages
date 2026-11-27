@@ -833,7 +833,7 @@ var ORNAMENT = (function () {
 
   const COLORS = { decagon: '#22306b', hexagon: '#2a8f86', bowtie: '#3b63b5', pentagon: '#b4522c', rhombus: '#c99a3a' };
   const IVORY = '#efe3c4', STRAP_DARK = '#0b0913', GOLD = '#d6a748', PLAIN = '#223272';
-  const PANELS = [[8, 11], [9, 12], [10, 13], [11, 14]];
+  const PANEL_W = 9, PANEL_H = 12; // every panel's size
   const SKIPS = 3, FADE_MS = 1400;
   const TRAY = 3; // tiles in the tray to choose from
 
@@ -855,7 +855,7 @@ var ORNAMENT = (function () {
   const calm = () => reduceMotion.matches;
 
   // tray: the TRAY tile ids to choose from (null for a place just emptied, none once the panel is judged); active: the place in use
-  let board, W = 8, H = 11, panelIdx = 0, score = 0, skips = SKIPS, tray = [], active = 0;
+  let board, W = PANEL_W, H = PANEL_H, panelIdx = 0, score = 0, skips = SKIPS, tray = [], active = 0;
   // byType: tile id -> where it fits (Board.candidateSets); cands: the same for the active tile
   let byType = new Map(), cands = new Map(), candList = [], sel = null, phase = 'title';
   let sc = 30, ox = 0, oy = 0, cssW = 40, cssH = 40, D = 1; // D: the pixel ratio the canvases were last sized for
@@ -1055,7 +1055,7 @@ var ORNAMENT = (function () {
 
   // ---------- game flow ----------
   function newPanel() {
-    [W, H] = PANELS[Math.min(panelIdx, PANELS.length - 1)];
+    W = PANEL_W; H = PANEL_H;
     board = new Board(W, H);
     board.add(place(TILES.decagon, 0, W / 2, H / 2));
     skips = SKIPS; tray = []; active = 0;
@@ -1213,8 +1213,9 @@ var ORNAMENT = (function () {
   function parseSave(s) {
     if (!s || typeof s !== 'object' || (s.phase !== 'play' && s.phase !== 'done')) return null;
     if (!isInt(s.panelIdx, 0, 1e6) || !Number.isFinite(s.score) || s.score < 0 || !isInt(s.skips, 0, SKIPS)) return null;
-    const [w, h] = PANELS[Math.min(s.panelIdx, PANELS.length - 1)];
-    if (s.W !== w || s.H !== h) return null;
+    // a panel keeps the size it was begun at (panels used to grow from 8×11 to 11×14)
+    const w = s.W, h = s.H;
+    if (!isInt(w, 4, 30) || !isInt(h, 4, 30)) return null;
     // saves from before the tray kept the three tiles dealt in `queue`; they become the tray
     const tray = s.tray === undefined ? s.queue : s.tray, active = s.active === undefined ? 0 : s.active;
     if (!Array.isArray(tray) || tray.length > TRAY || !tray.every(isTile)) return null;
@@ -1455,8 +1456,8 @@ var ORNAMENT = (function () {
       ok(d.tray.join() === 'bowtie,decagon,decagon' && d.gone.join() === 'rhombus,rhombus', 'tray: tiles that no longer fit are replaced');
       // seeded games: the cached, incremental candidate search against the direct one
       let saveBoard = null;
-      for (const [seed, pi] of [[1, 0], [2, 1], [3, 3]]) {
-        const [w, h] = PANELS[pi], R = rng(seed), b = new Board(w, h), game = 'game ' + seed + ' step ';
+      for (const seed of [1, 2, 3]) {
+        const w = PANEL_W, h = PANEL_H, R = rng(seed), b = new Board(w, h), game = 'game ' + seed + ' step ';
         let hand = { tray: [] }, dealt = true;
         b.add(place(TILES.decagon, 0, w / 2, h / 2));
         for (let step = 0; ; step++) {
@@ -1467,7 +1468,7 @@ var ORNAMENT = (function () {
             const again = new Board(w, h);
             for (const t of b.tiles) again.add(place(t.tile, t.r, t.x, t.y));
             ok(fromBoard(again) === fromBoard(b), game + step + ': a rebuilt board has the same candidates');
-            if (pi === 0) saveBoard = b.tiles.map(t => ({ id: t.tile.id, r: t.r, x: t.x, y: t.y }));
+            if (seed === 1) saveBoard = b.tiles.map(t => ({ id: t.tile.id, r: t.r, x: t.x, y: t.y }));
           }
           if (!sets.size) break;
           // play as the game does: deal, then lay a random tile from the tray somewhere it fits
@@ -1495,10 +1496,12 @@ var ORNAMENT = (function () {
       const frame = faces([], 3, 4);
       ok(frame.length === 1 && near(Math.abs(G.polyArea(frame[0].poly)), 12), 'an empty panel is one region');
       // saves: a real one is accepted, damaged ones are refused
-      const good = { panelIdx: 0, score: 120, skips: 2, tray: ['hexagon', 'bowtie', 'decagon'], active: 1, phase: 'play', W: 8, H: 11, msg: '+10.', tiles: saveBoard };
+      const good = { panelIdx: 0, score: 120, skips: 2, tray: ['hexagon', 'bowtie', 'decagon'], active: 1, phase: 'play', W: PANEL_W, H: PANEL_H, msg: '+10.', tiles: saveBoard };
       const v = parseSave(JSON.parse(JSON.stringify(good)));
       ok(v && v.board.tiles.length === saveBoard.length, 'save: a valid save is accepted and rebuilt');
       ok(v && v.tray.join() === good.tray.join() && v.active === 1, 'save: the tray and the tray place in use come back');
+      const grown = parseSave({ ...good, W: 11, H: 14 });
+      ok(grown && grown.board.W === 11 && grown.board.H === 14, 'save: a panel begun at an older, larger size keeps its size');
       const older = { ...good, queue: ['hexagon', 'bowtie', 'decagon'] };
       delete older.tray; delete older.active;
       const o = parseSave(older);
@@ -1512,7 +1515,7 @@ var ORNAMENT = (function () {
         'inherited name as tile': { ...good, tiles: [{ id: 'constructor', r: 0, x: 4, y: 5.5 }] },
         'rotation out of range': { ...good, tiles: [{ ...good.tiles[0], r: 10 }] }, 'coordinate not a number': { ...good, tiles: [{ ...good.tiles[0], x: null }] },
         'overlapping tiles': { ...good, tiles: [...good.tiles, good.tiles[1]] }, 'no tiles': { ...good, tiles: [] },
-        'wrong panel size': { ...good, W: 9 }, 'too many set-asides': { ...good, skips: SKIPS + 1 }, 'negative score': { ...good, score: -1 },
+        'panel size not a whole number': { ...good, W: 9.5 }, 'panel too small': { ...good, H: 3 }, 'too many set-asides': { ...good, skips: SKIPS + 1 }, 'negative score': { ...good, score: -1 },
       };
       for (const name in bad) ok(parseSave(bad[name]) === null, 'save: refuses ' + name);
       // scoring: the fill bonus
