@@ -3,14 +3,17 @@
   Girih
 
   A tile-laying puzzle built on the five girih tiles of Persian strapwork.
-  Fill each panel outward from the central star: tap a lit edge to try the
-  current tile there, tap the same edge again to turn it, then press Set.
-  The panel is judged when nothing more will fit, and a flawless panel is
-  painted with flowers.
+  Fill each panel outward from the central star. Pick one of the three
+  tiles in your tray, tap a lit edge to try it there, tap the same edge
+  again to turn it, then press Set. A new tile takes its place in the
+  tray. The panel is judged when nothing more will fit. The fuller it is,
+  the bigger its bonus, and the last few gaps cost the most: a flawless
+  panel earns twice what a 99% one does, and is painted with flowers.
 
-  Keyboard: left and right arrows choose an edge, up and down arrows or r
-  turn the tile, enter or space sets it, s sets it aside. On the title
-  screen, escape continues the saved game, or begins one if there is none.
+  Keyboard: 1, 2 and 3 pick a tile from the tray, left and right arrows
+  choose an edge, up and down arrows or r turn the tile, enter or space
+  sets it, s sets it aside. On the title screen, escape continues the saved
+  game, or begins one if there is none.
 
   Progress is saved in localStorage, so closing the page and coming back
   offers to continue.
@@ -65,17 +68,25 @@
   #boardwrap { flex: 1; min-width: 0; min-height: 0; position: relative; }
   canvas#board { display: block; width: 100%; height: 100%; touch-action: none; }
 
-  aside { width: 150px; flex: none; display: flex; flex-direction: column; gap: 14px; }
+  aside { width: 192px; flex: none; display: flex; flex-direction: column; gap: 14px; }
   .hand { display: flex; flex-direction: column; gap: 4px; }
   .hand .lbl { font-size: 14px; font-style: italic; color: var(--ink-dim); }
-  .hand canvas { display: block; background: var(--panel); border: 1px solid var(--edge); }
-  .nexts { display: flex; gap: 6px; }
-  .actions { display: flex; flex-direction: column; gap: 8px; }
+  .tray { display: flex; gap: 6px; }
+  .tray canvas { display: block; margin: 0 auto; }
+  .tray button {
+    flex: 1 1 0; padding: 0; border: 2px solid var(--edge); border-radius: 3px;
+    background: var(--panel); cursor: pointer; touch-action: manipulation;
+  }
+  .tray button[aria-pressed="true"] { border-color: var(--gold); background: #222a50; }
+  .tray button:disabled { cursor: default; }
+  /* Turn and Set share a row; the other buttons take a row each */
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; }
   .actions button {
-    padding: 12px 10px; border-radius: 3px;
+    flex: 1 1 100%; padding: 12px 10px; border-radius: 3px;
     border: 1px solid var(--edge); background: var(--panel); color: var(--ink);
     font-size: 16px; cursor: pointer; touch-action: manipulation;
   }
+  .actions button.pair { flex-basis: 0; }
   .actions button.primary { background: var(--gold); color: var(--ground); border-color: var(--gold); }
   .actions button:disabled { opacity: 0.35; cursor: default; }
   .actions button:active:not(:disabled) { filter: brightness(1.15); }
@@ -91,12 +102,15 @@
     header h1 { font-size: 22px; }
     #hud { gap: 12px; font-size: 14px; }
     #stage { flex-direction: column; gap: 6px; }
-    aside { width: auto; flex-direction: row; align-items: stretch; justify-content: space-between; gap: 10px; }
-    .hand { flex-direction: row; align-items: flex-end; gap: 6px; }
+    /* the buttons move under the tray when the row is too narrow for both, and each fills it */
+    aside { width: auto; flex-direction: row; flex-wrap: wrap; align-items: flex-end; gap: 6px 12px; }
+    .hand { flex: 1 1 240px; }
     .hand .lbl { display: none; }
-    .nexts { gap: 4px; }
-    .actions { flex-direction: row; flex-wrap: wrap; flex: 1; justify-content: flex-end; gap: 6px; }
-    .actions button { padding: 0 10px; font-size: 15px; min-height: 44px; }
+    .actions { flex: 1 1 240px; gap: 6px; }
+    .actions button { flex: 1 1 0; padding: 0 10px; font-size: 15px; min-height: 44px; }
+  }
+  @media (forced-colors: active) {
+    .tray button[aria-pressed="true"] { border-color: Highlight; }
   }
 
   /* The title screen: a modal <dialog>, so the game behind it is inert until it closes. */
@@ -120,7 +134,7 @@
     margin: 18px 4px 0; padding: 12px 30px; background: var(--gold); color: var(--ground);
     border: 0; border-radius: 3px; font-size: 17px; cursor: pointer;
   }
-  .sheet button:focus-visible, .actions button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  .sheet button:focus-visible, .actions button:focus-visible, .tray button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 </style>
 </head>
 <body>
@@ -135,28 +149,30 @@
     <div id="boardwrap"><canvas id="board"></canvas></div>
     <aside>
       <div class="hand">
-        <span class="lbl">This tile</span>
-        <canvas id="now"></canvas>
-        <span class="lbl">Then</span>
-        <div class="nexts"><canvas id="n1"></canvas><canvas id="n2"></canvas></div>
+        <span class="lbl" id="tray-lbl">Tray</span>
+        <div class="tray" role="group" aria-labelledby="tray-lbl">
+          <button type="button" disabled><canvas></canvas></button>
+          <button type="button" disabled><canvas></canvas></button>
+          <button type="button" disabled><canvas></canvas></button>
+        </div>
       </div>
       <div class="actions">
-        <button id="btn-turn" disabled>Turn</button>
-        <button id="btn-set" class="primary" disabled>Set</button>
+        <button id="btn-turn" class="pair" disabled>Turn</button>
+        <button id="btn-set" class="primary pair" disabled>Set</button>
         <button id="btn-skip">Set aside <span id="skips">3</span></button>
         <button id="btn-view" hidden>Show scaffolding</button>
         <button id="btn-next" class="primary" hidden>Next panel</button>
       </div>
     </aside>
   </div>
-  <p id="hint">← → choose an edge, ↑ ↓ or R turn the tile, Enter or Space sets it, S sets it aside</p>
+  <p id="hint">1 2 3 pick a tile, ← → choose an edge, ↑ ↓ or R turn it, Enter or Space sets it, S sets it aside</p>
 
   <dialog id="overlay" class="sheet" aria-labelledby="title-heading">
     <div data-view="title" class="on">
       <h2 id="title-heading">Girih</h2>
       <p>The five tiles of Persian strapwork. Lines leave every edge at 54°, so wherever two tiles meet edge to edge the pattern runs on unbroken.</p>
       <div id="legend"></div>
-      <p>The tiles are scaffolding: when a panel is judged they dissolve and only the strapwork remains. A flawless panel is painted with flowers. Fill the panel outward from the central star. Tap a lit edge to try the tile there, tap the same edge again to turn it, then press Set. The panel is judged when nothing more will fit.</p>
+      <p>The tiles are scaffolding: when a panel is judged they dissolve and only the strapwork remains. A flawless panel is painted with flowers. Fill the panel outward from the central star. Pick one of the three tiles in your tray, tap a lit edge to try it there, tap the same edge again to turn it, then press Set. A new tile takes its place in the tray. The panel is judged when nothing more will fit. The last few gaps cost the most: a flawless panel earns twice what a 99% one does.</p>
       <p id="new-warn" class="verdict" role="status" hidden>A new game replaces your saved game. Press it again to confirm.</p>
       <button id="btn-continue" hidden>Continue</button>
       <button id="btn-start">Begin</button>
@@ -817,8 +833,9 @@ var ORNAMENT = (function () {
 
   const COLORS = { decagon: '#22306b', hexagon: '#2a8f86', bowtie: '#3b63b5', pentagon: '#b4522c', rhombus: '#c99a3a' };
   const IVORY = '#efe3c4', STRAP_DARK = '#0b0913', GOLD = '#d6a748', PLAIN = '#223272';
-  const PANELS = [[8, 11], [9, 12], [10, 13], [11, 14]];
+  const PANEL_W = 9, PANEL_H = 12; // every panel's size
   const SKIPS = 3, FADE_MS = 1400;
+  const TRAY = 3; // tiles in the tray to choose from
 
   const $ = s => document.querySelector(s);
   const canvas = $('#board'), ctx = canvas.getContext('2d');
@@ -832,12 +849,15 @@ var ORNAMENT = (function () {
   let ornateReady = false, ornateAt = null, ornateTimer = 0, faceCache = null;
   const SAVE_KEY = 'girih-save-2'; // bumped when tile geometry changes, so old boards cannot be rebuilt into overlaps
   const overlay = $('#overlay');
+  const trayButtons = [...document.querySelectorAll('.tray button')];
   const dpr = () => window.devicePixelRatio || 1;
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
   const calm = () => reduceMotion.matches;
 
-  let board, W = 8, H = 11, panelIdx = 0, score = 0, skips = SKIPS, queue = [];
-  let cands = new Map(), candList = [], sel = null, phase = 'title';
+  // tray: the TRAY tile ids to choose from (null for a place just emptied, none once the panel is judged); active: the place in use
+  let board, W = PANEL_W, H = PANEL_H, panelIdx = 0, score = 0, skips = SKIPS, tray = [], active = 0;
+  // byType: tile id -> where it fits (Board.candidateSets); cands: the same for the active tile
+  let byType = new Map(), cands = new Map(), candList = [], sel = null, phase = 'title';
   let sc = 30, ox = 0, oy = 0, cssW = 40, cssH = 40, D = 1; // D: the pixel ratio the canvases were last sized for
   let flashes = [];
 
@@ -960,8 +980,7 @@ var ORNAMENT = (function () {
       if (plain.width) { plain.width = canvas.width; plain.height = canvas.height; }
     }
     layout();
-    if (dprChanged) drawLegend();
-    updateHand(); // the hand icons change size across the small-screen breakpoint
+    if (dprChanged) { drawLegend(); updateHand(); }
     // the ornament is slow to paint: stretch the old one until resizing settles
     if (ornateReady && !ornateCurrent()) { clearTimeout(ornateTimer); ornateTimer = setTimeout(renderOrnate, 200); }
     requestDraw();
@@ -1036,10 +1055,10 @@ var ORNAMENT = (function () {
 
   // ---------- game flow ----------
   function newPanel() {
-    [W, H] = PANELS[Math.min(panelIdx, PANELS.length - 1)];
+    W = PANEL_W; H = PANEL_H;
     board = new Board(W, H);
     board.add(place(TILES.decagon, 0, W / 2, H / 2));
-    skips = SKIPS; queue = [];
+    skips = SKIPS; tray = []; active = 0;
     resetFades(); freeFinish();
     relayout();
     setMsg('');
@@ -1056,18 +1075,36 @@ var ORNAMENT = (function () {
   // `lead` is the message for the move that led here, kept in front of anything refresh adds.
   function refresh(lead) {
     sel = null;
-    const byType = board.candidateSets();
+    byType = board.candidateSets();
     if (!byType.size) { finishPanel(lead); return; }
-    // only tiles that fit somewhere right now are dealt; tiles the board has outgrown leave the queue at no cost
-    const gone = queue.filter(id => !byType.has(id)), msg = lead ? [lead] : [];
-    if (gone.length) msg.push('No longer fits and set aside: ' + gone.map(id => TILES[id].name.toLowerCase()).join(', ') + '.');
-    if (msg.length) setMsg(msg.join(' '));
-    queue = queue.filter(id => byType.has(id));
+    // only tiles that fit somewhere right now are dealt; tiles the board has outgrown leave at no cost
     const bag = [];
     for (const id of byType.keys()) for (let k = 0; k < TILES[id].weight; k++) bag.push(id);
-    while (queue.length < 3) queue.push(bag[Math.floor(Math.random() * bag.length)]);
-    cands = byType.get(queue[0]);
+    const d = deal(tray, byType, () => bag[Math.floor(Math.random() * bag.length)]);
+    tray = d.tray;
+    const msg = lead ? [lead] : [];
+    if (d.gone.length) msg.push('No longer fits and set aside: ' + d.gone.map(id => TILES[id].name.toLowerCase()).join(', ') + '.');
+    if (msg.length) setMsg(msg.join(' '));
+    choose(active);
+  }
+  // Fills the tray's empty places, and any holding a tile that no longer fits anywhere, with pick().
+  // `fits` has the tile types that fit somewhere. Returns a new tray, and the tiles that left
+  // because they no longer fit.
+  function deal(tray, fits, pick) {
+    const t = [], gone = [];
+    for (let i = 0; i < TRAY; i++) {
+      if (tray[i] && fits.has(tray[i])) { t.push(tray[i]); continue; }
+      if (tray[i]) gone.push(tray[i]);
+      t.push(pick());
+    }
+    return { tray: t, gone };
+  }
+  // Lights the edges where the tile in tray place i fits. A chosen edge stays chosen if that tile fits there too.
+  function choose(i) {
+    active = i;
+    cands = byType.get(tray[i]);
     candList = [...cands.values()].sort((a, b) => b.edge.mid[1] - a.edge.mid[1] || a.edge.mid[0] - b.edge.mid[0]);
+    sel = sel && cands.has(sel.key) ? { key: sel.key, idx: 0 } : null;
     updateHand(); updateHud();
   }
   function selectEdge(key, idx) {
@@ -1096,7 +1133,7 @@ var ORNAMENT = (function () {
     if (res.shared > 1) bits.push(res.shared + ' edges joined');
     if (res.closed.length) bits.push(res.closed.length + (res.closed.length === 1 ? ' joint closed' : ' joints closed'));
     if (res.rosettes.length) bits.push('rosette completed');
-    queue.shift();
+    tray[active] = null;
     renderLayer();
     refresh((bits.length ? bits.join(', ') + '. ' : '') + '+' + gain + '.');
     save();
@@ -1104,20 +1141,24 @@ var ORNAMENT = (function () {
   function skip() {
     if (phase !== 'play' || skips <= 0) return;
     skips--;
-    const lead = 'The ' + TILES[queue[0]].name.toLowerCase() + ' is set aside.';
-    queue.shift();
+    const lead = 'The ' + TILES[tray[active]].name.toLowerCase() + ' is set aside.';
+    tray[active] = null;
     refresh(lead);
     save();
   }
+  // The bonus for filling a panel climbs steeply: each percentage point nearer full is worth more
+  // than the one before, a flawless panel earns twice what a 99% one does, and later panels pay more.
+  const fillBonus = (pct, panel) => Math.round(1500 * (panel + 1) / (101 - pct));
   function finishPanel(lead) {
     phase = 'done';
-    const cov = board.coverage(), pct = Math.floor(cov * 100 + 1e-9), perfect = cov >= 1 - 1e-6;
+    // pct follows `perfect`, so a flawless panel is never paid as 99%
+    const cov = board.coverage(), perfect = cov >= 1 - 1e-6, pct = perfect ? 100 : Math.floor(cov * 100 + 1e-9);
     const sym = board.symmetries(), symNames = [];
     if (sym.vertical) symNames.push('left–right mirror');
     if (sym.horizontal) symNames.push('top–bottom mirror');
     if (sym.rotation) symNames.push('half-turn');
     const mult = 1 + 0.5 * symNames.length;
-    const bonus = Math.round((pct * 5 * (panelIdx + 1) + skips * 30) * mult);
+    const bonus = Math.round((fillBonus(pct, panelIdx) + skips * 30) * mult);
     score += bonus;
     const verdict =
       perfect ? 'Not a gap in it. The master finds nothing to correct and sends for the flower painters.' :
@@ -1126,7 +1167,7 @@ var ORNAMENT = (function () {
     setMsg((lead ? lead + ' ' : '') + pct + '% filled. ' + verdict + (symNames.length ? ' Symmetry: ' + symNames.join(', ') + ' (bonus ×' + mult + ').' : '') +
       ' ' + board.tiles.length + ' tiles, ' + board.rosettes + (board.rosettes === 1 ? ' rosette' : ' rosettes') +
       ', ' + [...board.vertMap.values()].filter(v => v.closed).length + ' closed joints. Panel bonus +' + bonus + '.');
-    sel = null; candList = []; cands = new Map();
+    sel = null; candList = []; cands = new Map(); byType = new Map(); tray = [];
     const now = performance.now();
     allocFinish();
     setFade(plainF, 1, now, 500);
@@ -1134,7 +1175,7 @@ var ORNAMENT = (function () {
     save();
     $('#btn-view').textContent = 'Show scaffolding';
     setDoneButtons(true);
-    updateHud();
+    updateHand(); updateHud();
   }
   function setDoneButtons(done) {
     $('#btn-next').hidden = !done;
@@ -1152,13 +1193,13 @@ var ORNAMENT = (function () {
     if (!board) return;
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify({
-        panelIdx, score, skips, queue, phase, W, H, msg: $('#msg').textContent,
+        panelIdx, score, skips, tray, active, phase, W, H, msg: $('#msg').textContent,
         tiles: board.tiles.map(t => ({ id: t.tile.id, r: t.r, x: t.x, y: t.y })),
       }));
     } catch (e) { /* storage unavailable; play on without saving */ }
   }
   function clearSave() { try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* nothing to clear */ } }
-  // Returns { s, board } for a usable save; an unreadable one is deleted.
+  // Returns { s, board, tray, active } for a usable save; an unreadable one is deleted.
   function loadSave() {
     let raw = null;
     try { raw = localStorage.getItem(SAVE_KEY); } catch (e) { return null; }
@@ -1172,9 +1213,13 @@ var ORNAMENT = (function () {
   function parseSave(s) {
     if (!s || typeof s !== 'object' || (s.phase !== 'play' && s.phase !== 'done')) return null;
     if (!isInt(s.panelIdx, 0, 1e6) || !Number.isFinite(s.score) || s.score < 0 || !isInt(s.skips, 0, SKIPS)) return null;
-    const [w, h] = PANELS[Math.min(s.panelIdx, PANELS.length - 1)];
-    if (s.W !== w || s.H !== h) return null;
-    if (!Array.isArray(s.queue) || s.queue.length > 3 || !s.queue.every(isTile)) return null;
+    // a panel keeps the size it was begun at (panels used to grow from 8×11 to 11×14)
+    const w = s.W, h = s.H;
+    if (!isInt(w, 4, 30) || !isInt(h, 4, 30)) return null;
+    // saves from before the tray kept the three tiles dealt in `queue`; they become the tray
+    const tray = s.tray === undefined ? s.queue : s.tray, active = s.active === undefined ? 0 : s.active;
+    if (!Array.isArray(tray) || tray.length > TRAY || !tray.every(isTile)) return null;
+    if (!isInt(active, 0, TRAY - 1)) return null;
     if (s.msg !== undefined && typeof s.msg !== 'string') return null;
     if (!Array.isArray(s.tiles) || !s.tiles.length) return null;
     const b = new Board(w, h);
@@ -1184,11 +1229,13 @@ var ORNAMENT = (function () {
       if (!b.fits(pl)) return null; // an edited or stale save must not rebuild into overlaps
       b.add(pl);
     }
-    return { s, board: b };
+    return { s, board: b, tray, active };
   }
-  function restore({ s, board: b }) {
-    panelIdx = s.panelIdx; score = s.score; skips = s.skips; queue = s.queue.slice(); W = s.W; H = s.H;
-    board = b;
+  function restore(v) {
+    const s = v.s;
+    panelIdx = s.panelIdx; score = s.score; skips = s.skips; W = s.W; H = s.H;
+    tray = v.tray.slice(); active = v.active;
+    board = v.board;
     resetFades(); freeFinish();
     $('#panel').textContent = panelIdx + 1;
     relayout();
@@ -1206,10 +1253,13 @@ var ORNAMENT = (function () {
     }
   }
   function updateHand() {
-    const small = window.matchMedia('(max-width: 640px), (orientation: portrait)').matches;
-    drawIcon($('#now'), queue[0], small ? 17 : 22, small ? 64 : 84);
-    drawIcon($('#n1'), queue[1], small ? 10 : 12, small ? 36 : 44);
-    drawIcon($('#n2'), queue[2], small ? 10 : 12, small ? 36 : 44);
+    const name = id => id ? TILES[id].name : 'Empty';
+    trayButtons.forEach((b, i) => {
+      drawIcon(b.firstElementChild, tray[i], 16, 56);
+      b.disabled = phase !== 'play' || !tray[i];
+      b.setAttribute('aria-pressed', String(phase === 'play' && i === active));
+      b.setAttribute('aria-label', name(tray[i]));
+    });
   }
   function updateHud() {
     $('#score').textContent = score;
@@ -1247,6 +1297,7 @@ var ORNAMENT = (function () {
   });
   canvas.addEventListener('pointercancel', () => { press = null; });
 
+  trayButtons.forEach((b, i) => b.addEventListener('click', () => { if (phase === 'play' && i !== active) choose(i); }));
   $('#btn-turn').addEventListener('click', () => { turn(); updateHud(); });
   $('#btn-set').addEventListener('click', setTile);
   $('#btn-skip').addEventListener('click', skip);
@@ -1309,7 +1360,9 @@ var ORNAMENT = (function () {
       }
       return;
     }
-    if (k === 'ArrowLeft' || k === 'ArrowRight') {
+    const slot = ['1', '2', '3'].indexOf(k);
+    if (slot >= 0) { if (slot !== active) choose(slot); }
+    else if (k === 'ArrowLeft' || k === 'ArrowRight') {
       e.preventDefault();
       if (!candList.length) return;
       let i = sel ? candList.findIndex(c => c.edge.key === sel.key) : -1;
@@ -1392,10 +1445,20 @@ var ORNAMENT = (function () {
           ok(G.placementsAgainst(t, edge).map(keyOf).sort().join() === allAgainst(t, edge).map(keyOf).sort().join(), id + ': placements against an edge of direction ' + dir);
         }
       }
+      // the tray: a used place is refilled and the others stay put; tiles that no longer fit
+      // anywhere are replaced and reported
+      const all = new Set(TILE_IDS), picks = list => () => list.shift();
+      let d = deal([], all, picks(['hexagon', 'bowtie', 'decagon']));
+      ok(d.tray.join() === 'hexagon,bowtie,decagon' && !d.gone.length, 'tray: a new panel deals a full tray');
+      d = deal(['decagon', null, 'bowtie'], all, picks(['pentagon']));
+      ok(d.tray.join() === 'decagon,pentagon,bowtie' && !d.gone.length, 'tray: a used place is refilled in place');
+      d = deal(['rhombus', 'decagon', 'rhombus'], new Set(['decagon', 'bowtie']), picks(['bowtie', 'decagon']));
+      ok(d.tray.join() === 'bowtie,decagon,decagon' && d.gone.join() === 'rhombus,rhombus', 'tray: tiles that no longer fit are replaced');
       // seeded games: the cached, incremental candidate search against the direct one
       let saveBoard = null;
-      for (const [seed, pi] of [[1, 0], [2, 1], [3, 3]]) {
-        const [w, h] = PANELS[pi], R = rng(seed), b = new Board(w, h), game = 'game ' + seed + ' step ';
+      for (const seed of [1, 2, 3]) {
+        const w = PANEL_W, h = PANEL_H, R = rng(seed), b = new Board(w, h), game = 'game ' + seed + ' step ';
+        let hand = { tray: [] }, dealt = true;
         b.add(place(TILES.decagon, 0, w / 2, h / 2));
         for (let step = 0; ; step++) {
           const sets = b.candidateSets();
@@ -1405,13 +1468,19 @@ var ORNAMENT = (function () {
             const again = new Board(w, h);
             for (const t of b.tiles) again.add(place(t.tile, t.r, t.x, t.y));
             ok(fromBoard(again) === fromBoard(b), game + step + ': a rebuilt board has the same candidates');
-            if (pi === 0) saveBoard = b.tiles.map(t => ({ id: t.tile.id, r: t.r, x: t.x, y: t.y }));
+            if (seed === 1) saveBoard = b.tiles.map(t => ({ id: t.tile.id, r: t.r, x: t.x, y: t.y }));
           }
           if (!sets.size) break;
-          const ids = [...sets.keys()], cs = [...sets.get(ids[Math.floor(R() * ids.length)]).values()];
+          // play as the game does: deal, then lay a random tile from the tray somewhere it fits
+          const ids = [...sets.keys()];
+          hand = deal(hand.tray, sets, () => ids[Math.floor(R() * ids.length)]);
+          dealt = dealt && hand.tray.length === TRAY && hand.tray.every(id => sets.has(id));
+          const slot = Math.floor(R() * TRAY), cs = [...sets.get(hand.tray[slot]).values()];
           const c = cs[Math.floor(R() * cs.length)], p = c.placements[Math.floor(R() * c.placements.length)];
           b.add(place(p.tile, p.r, p.x, p.y));
+          hand.tray[slot] = null;
         }
+        ok(dealt, game + 'end: every deal filled the tray with tiles that fit');
         let area = 0;
         for (const t of b.tiles) area += G.areaInRect(t, w, h);
         ok(b.coverage() === area / (w * h), game + 'end: running coverage equals the direct sum');
@@ -1427,18 +1496,34 @@ var ORNAMENT = (function () {
       const frame = faces([], 3, 4);
       ok(frame.length === 1 && near(Math.abs(G.polyArea(frame[0].poly)), 12), 'an empty panel is one region');
       // saves: a real one is accepted, damaged ones are refused
-      const good = { panelIdx: 0, score: 120, skips: 2, queue: ['hexagon', 'bowtie', 'decagon'], phase: 'play', W: 8, H: 11, msg: '+10.', tiles: saveBoard };
+      const good = { panelIdx: 0, score: 120, skips: 2, tray: ['hexagon', 'bowtie', 'decagon'], active: 1, phase: 'play', W: PANEL_W, H: PANEL_H, msg: '+10.', tiles: saveBoard };
       const v = parseSave(JSON.parse(JSON.stringify(good)));
       ok(v && v.board.tiles.length === saveBoard.length, 'save: a valid save is accepted and rebuilt');
+      ok(v && v.tray.join() === good.tray.join() && v.active === 1, 'save: the tray and the tray place in use come back');
+      const grown = parseSave({ ...good, W: 11, H: 14 });
+      ok(grown && grown.board.W === 11 && grown.board.H === 14, 'save: a panel begun at an older, larger size keeps its size');
+      const older = { ...good, queue: ['hexagon', 'bowtie', 'decagon'] };
+      delete older.tray; delete older.active;
+      const o = parseSave(older);
+      ok(o && o.tray.join() === 'hexagon,bowtie,decagon' && o.active === 0, 'save: a save from before the tray keeps its dealt tiles, as the tray');
       const bad = {
-        'not an object': null, 'title phase': { ...good, phase: 'title' }, 'no queue': { ...good, queue: undefined },
-        'unknown tile in queue': { ...good, queue: ['star'] }, 'unknown tile': { ...good, tiles: [...good.tiles, { id: 'star', r: 0, x: 1, y: 1 }] },
+        'not an object': null, 'title phase': { ...good, phase: 'title' }, 'no tray': { ...good, tray: null },
+        'unknown tile in tray': { ...good, tray: ['star'] },
+        'empty place in tray': { ...good, tray: [null, 'hexagon', 'bowtie'] },
+        'tray too full': { ...good, tray: [...good.tray, 'rhombus'] },
+        'tray place out of range': { ...good, active: TRAY }, 'unknown tile': { ...good, tiles: [...good.tiles, { id: 'star', r: 0, x: 1, y: 1 }] },
         'inherited name as tile': { ...good, tiles: [{ id: 'constructor', r: 0, x: 4, y: 5.5 }] },
         'rotation out of range': { ...good, tiles: [{ ...good.tiles[0], r: 10 }] }, 'coordinate not a number': { ...good, tiles: [{ ...good.tiles[0], x: null }] },
         'overlapping tiles': { ...good, tiles: [...good.tiles, good.tiles[1]] }, 'no tiles': { ...good, tiles: [] },
-        'wrong panel size': { ...good, W: 9 }, 'too many set-asides': { ...good, skips: SKIPS + 1 }, 'negative score': { ...good, score: -1 },
+        'panel size not a whole number': { ...good, W: 9.5 }, 'panel too small': { ...good, H: 3 }, 'too many set-asides': { ...good, skips: SKIPS + 1 }, 'negative score': { ...good, score: -1 },
       };
       for (const name in bad) ok(parseSave(bad[name]) === null, 'save: refuses ' + name);
+      // scoring: the fill bonus
+      const steps = [];
+      for (let pc = 90; pc < 100; pc++) steps.push(fillBonus(pc + 1, 0) - fillBonus(pc, 0));
+      ok(steps.every((g, i) => i === 0 || g > steps[i - 1]), 'scoring: each point nearer a full panel is worth more than the last (' + steps.join(', ') + ')');
+      ok(fillBonus(100, 0) === 2 * fillBonus(99, 0), 'scoring: a flawless panel earns twice what a 99% one does');
+      ok(fillBonus(100, 3) === 4 * fillBonus(100, 0), 'scoring: the fourth panel pays four times the first');
       // ornament center: the centroid for a convex region, an interior point otherwise
       const L = [[0, 0], [4, 0], [4, 0.5], [0.5, 0.5], [0.5, 4], [0, 4]], cL = ORNAMENT.center(L);
       ok(G.pointInPoly(L, cL) && Math.min(cL[0], cL[1], 0.5 - Math.min(cL[0], cL[1])) > 0.2, 'ornament: an L-shaped region gets a center well inside it');
